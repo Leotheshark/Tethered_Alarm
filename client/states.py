@@ -43,4 +43,5 @@ if __name__ == "__main__":
     print(sm.transition(State.GAME))           # True
     print(sm.transition(State.RESULT))         # True
     print(sm.transition(State.SETUP))          # True
+    
     print("✅ 狀態機測試完成")
