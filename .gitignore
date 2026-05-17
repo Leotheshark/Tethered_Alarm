@@ -1,0 +1,29 @@
+# Python 自動生成的編譯檔（必加！）
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 虛擬環境資料夾（必加！）
+.venv/
+venv/
+ENV/
+
+# 編輯器與 IDE 設定（避免互相覆蓋個人習慣）
+.vscode/
+.cursor/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# 作業系統產生的垃圾檔案
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# 隨機生成的日誌或測試檔案
+*.log
