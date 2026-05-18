@@ -10,6 +10,14 @@
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
     <style>
+        /* 定義 CSS 變數，預設值為你現在喜歡的這四個顏色 */
+        :root {
+            --player-blue: #54a0ff;
+            --player-green: #5fcf80;
+            --player-pink: #ff80bf;
+            --player-red: #ff4d4d;
+        }
+
         /* 基礎排版：讓所有東西在畫面中間排成一列 */
         body {
             background-color: #ffebd0; /* 更低對比、柔和的米灰色 */
@@ -71,11 +79,12 @@
             transition: all 0.4s ease; /* 變亮時有平滑動畫 */
         }
 
+        /* Ready 按鈕預設隱藏 */
         /* 四種顏色 */
-        .blue { background-color: #54a0ff; } /* 飽和的清澈藍 */
-        .green { background-color: #5fcf80; } /* 飽和的嫩綠色 */
-        .pink { background-color: #ff80bf; } /* 更具辨識度的粉色 */
-        .red { background-color: #ff4d4d; }  /* 更具辨識度的紅色 */
+        .blue { background-color: var(--player-blue); }
+        .green { background-color: var(--player-green); }
+        .pink { background-color: var(--player-pink); }
+        .red { background-color: var(--player-red); }
 
         /* 下：Ready 按鈕 */
         .ready-button {
@@ -84,6 +93,7 @@
             border: 3px solid #e05252; /* 稍微深一點的紅色邊框 */
             padding: 15px 60px;
             font-size: 1.5rem;
+            display: none; /* 預設隱藏，鬧鐘響後才顯示 */
             font-weight: bold;
             cursor: pointer;
             transition: background-color 0.2s;
@@ -151,6 +161,60 @@
             color: #ff0000;  /* 純紅色倒數 */
             z-index: 100;
         }
+        
+        /* 鬧鐘下方的紅字提示 */
+        #alarm-hint {
+            color: #ff4d4d;
+            font-size: 1.1rem;
+            margin-top: -30px;
+            margin-bottom: 30px;
+            font-weight: bold;
+            visibility: hidden;
+        }
+
+        /* 睡眠模式遮罩層：全螢幕深藍色 */
+        #sleep-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: #1a1a2e;
+            display: none; /* 預設隱藏 */
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #e94560;
+            z-index: 90;
+        }
+        .sleep-text {
+            font-size: 2rem;
+            margin-top: 20px;
+            letter-spacing: 5px;
+        }
+    </style>
+
+    <!-- 房間已滿提示遮罩 -->
+    <div id="room-full-overlay">
+        <div class="room-full-content">
+            <div style="font-size: 5rem;">🚫</div>
+            <div class="room-full-text" id="text-room-full">此房間人數已滿</div>
+            <button id="btn-try-another-room">嘗試其他房間</button>
+        </div>
+    </div>
+
+    <style>
+        #room-full-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.8); display: none; /* 預設隱藏 */
+            flex-direction: column; align-items: center; justify-content: center;
+            z-index: 120; color: white;
+        }
+        .room-full-content { text-align: center; }
+        .room-full-text { font-size: 2.5rem; margin-top: 20px; margin-bottom: 30px; }
+        #btn-try-another-room {
+            padding: 15px 30px; font-size: 1.2rem; font-weight: bold;
+            background-color: #54a0ff; color: white; border: none; border-radius: 8px;
+            cursor: pointer; transition: background-color 0.2s;
+        }
+        #btn-try-another-room:hover { background-color: #3a80d0; }
     </style>
 </head>
 <body>
@@ -164,6 +228,9 @@
 
     <!-- 鬧鐘時間區域 -->
     <div class="alarm-clock" id="alarmTime">07:00</div>
+    
+    <!-- 鬧鐘下方提示 (僅在 4 人到齊時顯示) -->
+    <div id="alarm-hint">All players here! Host can set the alarm.</div>
 
     <!-- 角色插槽區域 -->
     <div class="players-container">
@@ -194,6 +261,87 @@
         <div id="countdown-number">3</div>
     </div>
 
+    <!-- 睡眠模式層 (鬧鐘設定後顯示) -->
+    <div id="sleep-overlay">
+        <div style="font-size: 5rem;">🌙</div>
+        <div id="display-set-alarm-time" style="font-size: 2rem; margin-top: 10px; color: #e94560;"></div>
+        <div class="sleep-text" id="text-sleeping">SLEEPING...</div>
+    </div>
+
+    <!-- 時間選擇器模態框 -->
+    <div id="time-picker-modal">
+        <div class="time-picker-content">
+            <div class="time-display">
+                <div class="time-part">
+                    <button class="time-btn up" data-unit="hour"></button>
+                    <span id="picker-hour">08</span>
+                    <button class="time-btn down" data-unit="hour"></button>
+                </div>
+                <span class="separator">:</span>
+                <div class="time-part">
+                    <button class="time-btn up" data-unit="minute"></button>
+                    <span id="picker-minute">30</span>
+                    <button class="time-btn down" data-unit="minute"></button>
+                </div>
+            </div>
+            <div class="picker-actions">
+                <button id="set-time-btn">設定</button>
+                <button id="cancel-time-btn">取消</button>
+            </div>
+        </div>
+        <!-- 顯示剩餘時間 -->
+        <div id="time-remaining-hint" style="color: white; margin-top: 15px; font-size: 1.2rem; background: rgba(0,0,0,0.5); padding: 5px 15px; border-radius: 20px;"></div>
+    </div>
+
+    <style>
+        /* 時間選擇器模態框樣式 */
+        #time-picker-modal {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: none; /* 預設隱藏 */
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 110; /* 確保在其他遮罩之上 */
+        }
+        .time-picker-content {
+            background: #ffebd0;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+        .time-display {
+            display: flex;
+            align-items: center;
+            font-size: 4rem;
+            font-weight: bold;
+            color: #7a7570;
+        }
+        .time-part {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+        .separator { margin: 0 10px; }
+        .time-btn {
+            background: #d1cec7; border: none; border-radius: 5px; width: 50px; height: 30px; font-size: 1.5rem; cursor: pointer; color: #7a7570; transition: background-color 0.2s;
+        }
+        .time-btn:hover { background-color: #a69076; color: white; }
+        .time-btn.up::before { content: '▲'; }
+        .time-btn.down::before { content: '▼'; }
+        .picker-actions { display: flex; gap: 15px; }
+        .picker-actions button { padding: 10px 20px; font-size: 1.2rem; font-weight: bold; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.2s; }
+        #set-time-btn { background-color: #5fcf80; color: white; }
+        #set-time-btn:hover { background-color: #40a050; }
+        #cancel-time-btn { background-color: #fa5c5c; color: white; }
+        #cancel-time-btn:hover { background-color: #c83f3f; }
+    </style>
     <script>
         // --- 語系設定 (i18n) ---
         const translations = {
@@ -205,7 +353,15 @@
                 'host_prompt': '你是房長，請輸入鬧鐘設定時間 (例如 08:30):',
                 'game_starting': '遊戲即將開始',
                 'ready': '準備！',
-                'room_full': '該房間已滿 (最多 4 人)！'
+                'room_full': '該房間已滿 (最多 4 人)！', // <--- 這裡補上了逗號
+                'set_time': '設定',
+                'cancel_time': '取消',
+                'sleeping': '睡眠中...',
+                'room_full_message': '此房間人數已滿',
+                'try_another_room': '嘗試其他房間',
+                'alarm_hint': '全員到齊！房長可以點擊時鐘設定鬧鐘了',
+                'time_until': '鬧鐘將在 $t 後響起',
+                'alarm_time_prefix': '訂下的起床時間：'
             },
             'en': {
                 'room_id_label': 'ROOM ID',
@@ -215,7 +371,15 @@
                 'host_prompt': 'You are Host, enter alarm time (e.g., 08:30):',
                 'game_starting': 'GAME STARTING IN',
                 'ready': 'READY!',
-                'room_full': 'Room is full (max 4 players)!'
+                'room_full': 'Room is full (max 4 players)!', // <--- 這裡也補上了逗號
+                'set_time': 'Set',
+                'cancel_time': 'Cancel',
+                'sleeping': 'SLEEPING...',
+                'room_full_message': 'This room is full',
+                'try_another_room': 'Try another room',
+                'alarm_hint': 'All players here! Host can set the alarm.',
+                'time_until': 'Alarm in: $t',
+                'alarm_time_prefix': 'Set Alarm Time: '
             }
         };
 
@@ -227,6 +391,12 @@
             document.getElementById('btn-invite').textContent = t.invite_btn;
             document.getElementById('text-starting').textContent = t.game_starting;
             document.querySelectorAll('.ready-label').forEach(el => el.textContent = t.ready);
+            document.getElementById('text-sleeping').textContent = t.sleeping;
+            document.getElementById('set-time-btn').textContent = t.set_time;
+            document.getElementById('cancel-time-btn').textContent = t.cancel_time;
+            document.getElementById('text-room-full').textContent = t.room_full_message;
+            document.getElementById('btn-try-another-room').textContent = t.try_another_room;
+            document.getElementById('alarm-hint').textContent = t.alarm_hint;
         }
 
         function toggleLanguage() {
@@ -245,12 +415,14 @@
         setInterval(updateClock, 1000);
         updateClock();
 
-        // --- UI 元素與事件處理 ---
-        const readyButton = document.querySelector('.ready-button'); // 取得 Ready 按鈕元素
+        // --- UI 元素定義 ---
+        const readyButton = document.querySelector('.ready-button'); 
+        const timePickerModal = document.getElementById('time-picker-modal');
+        const pickerHourSpan = document.getElementById('picker-hour');
+        const pickerMinuteSpan = document.getElementById('picker-minute');
+        const setTimeBtn = document.getElementById('set-time-btn');
+        const cancelTimeBtn = document.getElementById('cancel-time-btn');
 
-        const socket = io(); // 自動連向目前的伺服器
-
-        // 取得房間 ID 的優先順序：網址參數 (?room=xxx) > 使用者輸入 > 預設值
         const urlParams = new URLSearchParams(window.location.search);
         let ROOM_ID = urlParams.get('room');
         
@@ -380,6 +552,24 @@
                 } else {
                     readyButton.classList.remove('active'); // 移除類別恢復原始亮度
                 }
+
+                // 4. 鬧鐘設定權限控制
+                const isHost = currentSocketId === state.host_sid;
+                const isFull = state.count === 4;
+                const alarmHint = document.getElementById('alarm-hint');
+                const hasTriggered = alarmHint.dataset.triggered === "true";
+                
+                // 簡化邏輯：只要鬧鐘已設定或已觸發，就視為「忙碌」狀態
+                const isBusy = !!state.alarm_time || hasTriggered;
+
+                // 只有房長且滿足條件（滿人且非忙碌）時，游標才顯示為手指
+                alarmClock.style.cursor = (isHost && isFull && !isBusy) ? "pointer" : "default";
+
+                // 5. 更新紅字提示：滿 4 人且目前非忙碌狀態時顯示
+                alarmHint.style.visibility = (isFull && !isBusy) ? "visible" : "hidden";
+
+                // 如果人數不足，重設觸發標記，讓下一輪滿人時還能重新看到設定提示
+                if (!isFull) alarmHint.dataset.triggered = "false";
             },
             onAllReady: (data) => {
                 // 1. 固定畫面：禁用按鈕，防止玩家在倒數期間取消準備
@@ -410,20 +600,37 @@
             onAlarmSet: (data) => {
                 // 房長設定完時間，大家進入睡眠狀態
                 document.getElementById('sleep-overlay').style.display = 'flex';
+                const t = translations[currentLang];
+                document.getElementById('display-set-alarm-time').textContent = `${t.alarm_time_prefix}${data.time}`;
                 console.log("鬧鐘已設定，進入睡眠模式...");
             },
             onAlarmTriggered: (data) => {
+                const alarmHint = document.getElementById('alarm-hint');
                 // 時間到！移除睡眠遮罩，跳轉（顯現）回大廳
                 document.getElementById('sleep-overlay').style.display = 'none';
                 console.log("時間到！喚醒玩家！");
                 // 這裡可以加入播放鬧鐘鈴聲的邏輯
+                readyButton.style.display = 'block'; // 鬧鐘響起後顯示 Ready 按鈕
+                alarmHint.style.visibility = 'hidden'; // 鬧鐘響起後隱藏紅字提示
+                alarmHint.dataset.triggered = "true"; // 標記已進入準備階段，防止 room_state 更新時重新顯示
             },
             onJoinFailed: (data) => {
                 if (data.reason === 'full') {
-                    alert(translations[currentLang].room_full);
-                    // 重新整理頁面讓玩家可以重新輸入房號
-                    window.location.href = window.location.pathname;
+                    // 顯示房間已滿的遮罩
+                    document.getElementById('room-full-overlay').style.display = 'flex';
                 }
+            },
+            // 新增：用來動態同步顏色設定的函式
+            updateColorPalette: (colorMap) => {
+                // 如果伺服器傳來新的顏色 (RGB)，我們可以在這裡更新 CSS 變數
+                // 例如 colorMap = {"blue": [84, 160, 255], ...}
+                for (const [name, rgb] of Object.entries(colorMap)) {
+                    document.documentElement.style.setProperty(
+                        `--player-${name}`, 
+                        `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`
+                    );
+                }
+                console.log("顏色面板已根據 constants.py 更新");
             },
             onGameStarted: () => {
                 console.log("伺服器確認：遊戲正式開始！");
@@ -431,50 +638,139 @@
             }
         };
 
-        // --- 程式啟動點 ---
-        // 1. 處理房間 ID 輸入
-        if (!ROOM_ID) {
-            ROOM_ID = prompt(translations[currentLang].room_prompt, "room-" + Math.floor(Math.random() * 1000));
-        }
-        document.getElementById('displayRoomId').textContent = ROOM_ID;
+        // --- 時間選擇器邏輯 ---
+        let selectedHour = 8; // 預設小時
+        let selectedMinute = 30; // 預設分鐘
 
-        // 2. 實例化 SocketManager
-        const socketManager = new SocketManager("http://127.0.0.1:5000", ROOM_ID, uiCallbacks);
+        function updatePickerDisplay() {
+            pickerHourSpan.textContent = String(selectedHour).padStart(2, '0');
+            pickerMinuteSpan.textContent = String(selectedMinute).padStart(2, '0');
 
-        // --- UI 事件綁定 ---
-        // 綁定 Ready 按鈕點擊事件
-        function sendReady() {
-            const isCurrentlyReady = readyButton.classList.contains('active');
-            socketManager.sendReadyStatus(!isCurrentlyReady); // 切換狀態
-        }
-
-        // 綁定邀請連結複製事件
-        function copyInviteLink() {
-            const inviteUrl = window.location.origin + window.location.pathname + "?room=" + ROOM_ID;
-            navigator.clipboard.writeText(inviteUrl).then(() => {
-                alert(translations[currentLang].invite_success);
-            });
-        }
-
-        // 綁定鬧鐘時間點擊事件 (房長專用)
-        alarmClock.style.cursor = "default";
-        alarmClock.onclick = () => {
-            if (socketManager.isHost()) { // 使用 SocketManager 判斷是否為房長
-                const time = prompt(translations[currentLang].host_prompt);
-                if (time) {
-                    socketManager.sendAlarmTime(time); // 使用 SocketManager 發送
-                }
+            // 計算還有多久響起
+            const now = new Date();
+            let alarmDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), selectedHour, selectedMinute, 0);
+            
+            // 如果時間已經過了，代表是明天
+            if (alarmDate <= now) {
+                alarmDate.setDate(alarmDate.getDate() + 1);
             }
+
+            const diffMs = alarmDate - now;
+            const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
+            const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+            const t = translations[currentLang];
+            let timeStr = "";
+            if (currentLang === 'zh') {
+                timeStr = `${diffHrs} 小時 ${diffMins} 分鐘`;
+            } else {
+                timeStr = `${diffHrs}h ${diffMins}m`;
+            }
+            document.getElementById('time-remaining-hint').textContent = t.time_until.replace('$t', timeStr);
+        }
+
+        function showTimePicker() {
+            timePickerModal.style.display = 'flex';
+            // 初始化為當前時間或上次設定的時間
+            const now = new Date();
+            selectedHour = now.getHours();
+            selectedMinute = now.getMinutes();
+            updatePickerDisplay();
+        }
+
+        function hideTimePicker() {
+            timePickerModal.style.display = 'none';
+        }
+
+        // 長按切換邏輯
+        let pressTimer, repeatInterval;
+
+        function handleTimeChange(unit, isUp) {
+            if (unit === 'hour') {
+                selectedHour = isUp ? (selectedHour + 1) % 24 : (selectedHour - 1 + 24) % 24;
+            } else {
+                selectedMinute = isUp ? (selectedMinute + 1) % 60 : (selectedMinute - 1 + 60) % 60;
+            }
+            updatePickerDisplay();
+        }
+
+        document.querySelectorAll('.time-btn').forEach(button => {
+            const unit = button.dataset.unit;
+            const isUp = button.classList.contains('up');
+
+            // 滑鼠按下時啟動定時器
+            button.onmousedown = (e) => {
+                e.preventDefault();
+                handleTimeChange(unit, isUp); // 先執行一次
+
+                // 延遲 500ms 後啟動快速切換
+                pressTimer = setTimeout(() => {
+                    repeatInterval = setInterval(() => {
+                        handleTimeChange(unit, isUp);
+                    }, 100); // 每 100ms 切換一次
+                }, 500);
+            };
+
+            // 滑鼠放開或移開時清除定時器
+            const stopPress = () => {
+                clearTimeout(pressTimer);
+                clearInterval(repeatInterval);
+            };
+
+            button.onmouseup = stopPress;
+            button.onmouseleave = stopPress;
+            
+            // 支援觸控設備
+            button.ontouchstart = button.onmousedown;
+            button.ontouchend = stopPress;
+        });
+
+        setTimeBtn.onclick = () => {
+            const time = `${String(selectedHour).padStart(2, '0')}:${String(selectedMinute).padStart(2, '0')}`;
+            socketManager.sendAlarmTime(time);
+            hideTimePicker();
         };
 
-        // 接收伺服器確認遊戲開始的廣播 (現在由 SocketManager 處理並呼叫 uiCallbacks.onGameStarted)
-        // socket.on("game_started", () => { ... }); // 這行現在不需要了
+        cancelTimeBtn.onclick = () => {
+            hideTimePicker();
+        };
 
-        /**
-         * 當玩家按下 READY 按鈕時觸發
-         * 會根據按鈕當前狀態決定是「準備」還是「取消準備」
-         */
-        // function sendReady() { ... } // 這個函式現在已經被重新定義在程式啟動點下方
+        let socketManager = null;
+
+        function startApp() {
+            // 1. 強制房號輸入 (不允許空白或取消)
+            while (!ROOM_ID || !ROOM_ID.trim()) {
+                ROOM_ID = prompt(translations[currentLang].room_prompt, "room-" + Math.floor(Math.random() * 1000));
+            }
+            document.getElementById('displayRoomId').textContent = ROOM_ID;
+
+            socketManager = new SocketManager(window.location.origin, ROOM_ID, uiCallbacks);
+
+            // 綁定時鐘點擊 (僅房長可操作)
+            alarmClock.onclick = () => {
+                if (socketManager?.isHost() && alarmClock.style.cursor === "pointer") showTimePicker();
+            };
+        }
+        
+        // 啟動入口
+        startApp();
+
+        // --- UI 按鈕事件實作 ---
+        function sendReady() {
+            if (socketManager) {
+                const isReady = !readyButton.classList.contains('active');
+                socketManager.sendReadyStatus(isReady);
+            }
+        }
+
+        function copyInviteLink() {
+            const url = `${window.location.origin}${window.location.pathname}?room=${ROOM_ID}`;
+            navigator.clipboard.writeText(url).then(() => alert(translations[currentLang].invite_success));
+        }
+
+        document.getElementById('btn-try-another-room').onclick = () => {
+            window.location.href = window.location.pathname;
+        };
     </script>
 </body>
 </html>
