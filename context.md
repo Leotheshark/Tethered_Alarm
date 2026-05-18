@@ -18,7 +18,7 @@
   - [x] 建立「房間管理記憶體結構」：實作 sid 追蹤與自動斷線清理邏輯。
 - **前端 (Frontend)**：
   - [X] 設計大廳等待（LOBBY）、鬧鐘設定與房間輸入畫面的 Pygame UI 基礎線條與佈局。
-  - [ ] 建立 `SocketManager`：將測試指令封裝進類別，準備串接 Pygame 遊戲主迴圈。
+  - [X] 建立 `SocketManager`：將測試指令封裝進類別，準備串接 Pygame 遊戲主迴圈。
 - **系統層 (System)**：
   - [x] 引入 pywin32 調用邏輯（透過 ctypes 實作 Win32 API），防止電腦進入系統睡眠模式（Sleep Prevention）。
 
