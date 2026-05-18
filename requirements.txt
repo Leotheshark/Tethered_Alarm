@@ -1,3 +1,6 @@
 pygame
 python-socketio
 pywin32
+dnspython==2.8.0
+eventlet==0.41.0
+greenlet==3.5.0
