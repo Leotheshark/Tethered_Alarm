@@ -3,10 +3,17 @@
 ## 程式碼生成規則
 - **註解規則**：程式碼中要加上註解，讓每一步的目的清晰可見
 - **生成程式碼前**：生成程式碼前一定要先看過整個專案的程式碼，並合理規劃資料夾及檔案路徑
+  **生成程式碼時**：如果是創造新功能或新遊戲等等，先將完整的流程方案告訴使用者，再讓使用者決定是否生成；如果是修改原有的程式碼，根據使用者的要求做最小限度的修改就好。
+- **核心架構規範**：
+  - **狀態模式 (State Pattern)**：使用 StateManager 類別管理 `LOBBY`, `ALARM`, `GAME` 狀態切換，避免大型 if-else。
+  - **數據標準化 (Dataclasses)**：所有網路同步封包應使用 `dataclasses` 定義，確保型別安全與 Key 名稱一致。
+  - **系統層封裝**：Win32 API（防睡眠、視窗置頂）需統一封裝於 `SystemHelper` 工具類中。
+  - **資源解耦**：音效與圖片資源由 `SoundManager` 或 `AssetLoader` 統一調度，不直接硬編碼於遊戲邏輯中。
 
 ##  專案目標與核心機制
 - **核心概念**：一款網路連線、2~4人多人在線協作的解謎鬧鐘遊戲。
 - **基本玩法**：所有玩家的鬧鐘會在約定的時間同時響起。玩家必須合作通關，才能關掉鬧鐘。
+- **流程**：1.睡覺前(state 0):所有玩家到齊後，由房主設定起床時間，並進入睡覺state 2.起床時間，鬧鐘響起，出現ready按鈕，四個人都按下後，倒計時後遊戲開始 3.隨機抽取遊戲，四人合力嘗試通關 4. (a)通關成功，回到大廳，此時可以重新設定時鐘(回到 state 0) (b)通關失敗，可以選擇遭受開發者的嘲笑並投降，或者重新開始遊戲。
 
 ##  四週開發進度與微觀任務清單 (4-Week Micro-task Roadmap)
 
@@ -25,10 +32,10 @@
 ### Week 2: Core Awakening & Enforcement (核心喚醒與強制執行)
 - **週目標**：鬧鐘在所有裝置上同時觸發，本地啟動最高強度防禦，確保使用者無法輕易繞過或關閉。
 - **音效管理 (Audio)**：
-  - [ ] 標準化 `.ogg` 音效引擎（使用 `pygame.mixer`），確保全體玩家達到高音量、完全同步的警報播放。
+    - [ ] 實作 `SoundManager` 封裝音效邏輯，支援音量漸增與專屬頻道管理，確保全體玩家同步。
 - **系統強化 (System Hardening)**：
-  - [ ] 開發「反任務殺手邏輯（Anti-Task-Kill logic）」：捕捉並阻擋 `pygame.QUIT` 事件，防止直接點 [X] 關閉。
-  - [ ] 使用 Win32 API 實作 `SetForegroundWindow`，時間到時強制將遊戲視窗彈出至系統最上層並鎖定焦點。
+  - [ ] 開發「反任務殺手邏輯（Anti-Task-Kill logic）」：捕捉並阻擋 `pygame.QUIT` 事件，防止直接點 X 關閉。
+    - [ ] 使用 `SystemHelper` 調用 Win32 API 實作強制置頂視窗，時間到時自動鎖定焦點。
 - **遊戲動態 (Movement)**：
   - [ ] 在 Pygame 中初始化基礎遊戲環境地圖，實作鍵盤（WASD）控制並即時對應/映射玩家的二維座標。
 
@@ -60,6 +67,14 @@ class BaseGameInterface:
     def __init__(self, screen, socket_client, player_id_list):
         """初始化遊戲，傳入 Pygame 畫布、Socket 連線實例以及所有玩家 ID"""
         pass
+
+    def on_enter(self, params: dict = None):
+        """當進入此遊戲時執行，可用於初始化計時器或重置分數，避免重複實作 __init__"""
+        self.is_active = True
+
+    def on_exit(self):
+        """當遊戲結束或切換時執行，用於停止音效、清除暫存資料"""
+        self.is_active = False
 
     def handle_event(self, event):
         """處理 Pygame 的視窗與輸入事件（鍵盤、滑鼠）"""

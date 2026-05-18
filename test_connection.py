@@ -1,15 +1,17 @@
-import socketio
-import time
-import threading
+# --- 引入工具箱 ---
+import socketio    # 連線伺服器的工具
+import time        # 處理延遲
+import threading   # 同時執行多個任務 (模擬多玩家)
 
-results = []
+results = [] # 儲存測試結果
 
 def connect_player(name):
+    """模擬單一玩家連線的行為"""
     sio = socketio.SimpleClient()
     try:
-        sio.connect("http://localhost:5000")
-        sio.emit("join_room", {"room_id": "test-room"})
-        event = sio.receive(timeout=3)
+        sio.connect("http://localhost:5000") # 連接到本地伺服器
+        sio.emit("join_room", {"room_id": "test-room"}) # 加入測試房間
+        event = sio.receive(timeout=3) # 等待伺服器回應
         count = event[1].get("count", "?")
         print(f"[{name}] ✅ 連線成功，房間人數：{count}")
         results.append(True)
