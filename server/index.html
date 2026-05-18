@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <!-- 設定網頁的編碼與基本資訊 -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tethered Alarm - Lobby</title>
+
+    <!-- 引入外部工具：Socket.io 的客戶端程式碼，讓我們能跟伺服器說話 -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+    <style>
+        /* 基礎排版：讓所有東西在畫面中間排成一列 */
+        body {
+            background-color: #ffebd0; /* 更低對比、柔和的米灰色 */
+            color: #7a7570;            /* 低對比的暖灰色 */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        /* 上：鬧鐘時間 */
+        .alarm-clock {
+            font-size: 3.5rem;
+            font-weight: bold;
+            margin-bottom: 50px;
+            color: #a69076;            /* 低對比的褐色 */
+            text-shadow: none;         /* 移除陰影以達成平面化 */
+        }
+
+        /* 中：玩家角色區域 */
+        
+        .players-container {
+            display: flex;
+            gap: 60px;
+            margin-bottom: 100px;
+            height: 100px;
+            align-items: flex-end;
+        }
+
+        /* 單個玩家的插槽 (文字 + 圓圈) */
+        .player-slot {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 125px;
+        }
+
+        /* 角色頭上的 Ready! 字樣 */
+        .ready-label {
+            color: #ff6b6b;            /* 鮮明但不刺眼的珊瑚紅 */
+            font-weight: bold;
+            margin-bottom: 10px;
+            font-size: 1.2rem;
+            visibility: hidden; /* 預設隱藏 */
+            text-transform: uppercase;
+        }
+
+        /* 圓形角色 */
+        .character-circle {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background-color: #d1cec7; /* 淺灰底色 */
+            opacity: 0.15;             /* 未連線時更暗淡 */
+            transition: all 0.4s ease; /* 變亮時有平滑動畫 */
+        }
+
+        /* 四種顏色 */
+        .blue { background-color: #54a0ff; } /* 飽和的清澈藍 */
+        .green { background-color: #5fcf80; } /* 飽和的嫩綠色 */
+        .pink { background-color: #ff80bf; } /* 更具辨識度的粉色 */
+        .red { background-color: #ff4d4d; }  /* 更具辨識度的紅色 */
+
+        /* 下：Ready 按鈕 */
+        .ready-button {
+            background-color: #fa5c5c; /* 鮮明但不刺眼的珊瑚紅 */
+            color: white;
+            border: 3px solid #e05252; /* 稍微深一點的紅色邊框 */
+            padding: 15px 60px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            box-shadow: none;          /* 移除立體感陰影 */
+        }
+
+        .ready-button:hover {
+            background-color: #c83f3f; /* 滑鼠移上去時稍微深一點 */
+        }
+
+        .ready-button:active {
+            transform: none;           /* 移除縮放效果以達成平面化 */
+        }
+
+        /* Ready 按鈕被按下 (active) 時的樣式 */
+        .ready-button.active {
+            background-color: #ae2f2f; /* 按下後的暗紅色，代表已準備 */
+            transform: none;           /* 移除位移效果 */
+        }
+
+        /* 右上角房間資訊與邀請按鈕 */
+        .room-info {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            text-align: right;
+            color: #a69076;
+            font-size: 1.2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .lang-btn {
+            background: none;
+            border: 2px solid #d1cec7;
+            color: #a69076;
+            padding: 2px 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            align-self: flex-end;
+        }
+        .invite-btn {
+            background: none;
+            border: 2px solid #d1cec7;
+            color: #a69076;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+        .invite-btn:hover {
+            background-color: #d1cec7;
+            color: white;
+        }
+
+        /* 倒數計時遮罩層：全螢幕紅色大數字 */
+        #countdown-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(242, 237, 228, 0.95);
+            display: none; /* 預設隱藏 */
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 8rem; /* 特大號數字 */
+            color: #ff0000;  /* 純紅色倒數 */
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 房間資訊與邀請連結 -->
+    <div class="room-info">
+        <button class="lang-btn" onclick="toggleLanguage()">English / 中文</button>
+        <div><span id="text-room-id-label">ROOM ID</span>: <span id="displayRoomId">----</span></div>
+        <button class="invite-btn" id="btn-invite" onclick="copyInviteLink()">Copy Invite Link</button>
+    </div>
+
+    <!-- 鬧鐘時間區域 -->
+    <div class="alarm-clock" id="alarmTime">07:00</div>
+
+    <!-- 角色插槽區域 -->
+    <div class="players-container">
+        <div class="player-slot" id="slot-blue">
+            <div class="ready-label">Ready!</div>
+            <div class="character-circle blue"></div>
+        </div>
+        <div class="player-slot" id="slot-green">
+            <div class="ready-label">Ready!</div>
+            <div class="character-circle green"></div>
+        </div>
+        <div class="player-slot" id="slot-pink">
+            <div class="ready-label">Ready!</div>
+            <div class="character-circle pink"></div>
+        </div>
+        <div class="player-slot" id="slot-red">
+            <div class="ready-label">Ready!</div>
+            <div class="character-circle red"></div>
+        </div>
+    </div>
+
+    <!-- 準備按鈕 -->
+    <button class="ready-button" onclick="sendReady()">READY</button>
+
+    <!-- 倒數計時層 -->
+    <div id="countdown-overlay">
+        <div id="text-starting" style="font-size: 1.5rem; margin-bottom: 20px; color: #7a7570;">GAME STARTING IN</div>
+        <div id="countdown-number">3</div>
+    </div>
+
+    <script>
+        // --- 語系設定 (i18n) ---
+        const translations = {
+            'zh': {
+                'room_id_label': '房間 ID',
+                'invite_btn': '複製邀請連結',
+                'invite_success': '邀請連結已複製到剪貼簿！',
+                'room_prompt': '請輸入房間 ID 以建立或加入房間：',
+                'host_prompt': '你是房長，請輸入鬧鐘設定時間 (例如 08:30):',
+                'game_starting': '遊戲即將開始',
+                'ready': '準備！',
+                'room_full': '該房間已滿 (最多 4 人)！'
+            },
+            'en': {
+                'room_id_label': 'ROOM ID',
+                'invite_btn': 'Copy Invite Link',
+                'invite_success': 'Invite link copied to clipboard!',
+                'room_prompt': 'Enter Room ID to create or join:',
+                'host_prompt': 'You are Host, enter alarm time (e.g., 08:30):',
+                'game_starting': 'GAME STARTING IN',
+                'ready': 'READY!',
+                'room_full': 'Room is full (max 4 players)!'
+            }
+        };
+
+        let currentLang = 'en'; // 預設語言
+
+        function updateLanguage() {
+            const t = translations[currentLang];
+            document.getElementById('text-room-id-label').textContent = t.room_id_label;
+            document.getElementById('btn-invite').textContent = t.invite_btn;
+            document.getElementById('text-starting').textContent = t.game_starting;
+            document.querySelectorAll('.ready-label').forEach(el => el.textContent = t.ready);
+        }
+
+        function toggleLanguage() {
+            currentLang = (currentLang === 'zh') ? 'en' : 'zh';
+            updateLanguage();
+        }
+
+        const alarmClock = document.getElementById('alarmTime'); // 取得時鐘元素
+
+        function updateClock() {
+            const now = new Date();
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            alarmClock.textContent = `${hours}:${minutes}`;
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // --- UI 元素與事件處理 ---
+        const readyButton = document.querySelector('.ready-button'); // 取得 Ready 按鈕元素
+
+        const socket = io(); // 自動連向目前的伺服器
+
+        // 取得房間 ID 的優先順序：網址參數 (?room=xxx) > 使用者輸入 > 預設值
+        const urlParams = new URLSearchParams(window.location.search);
+        let ROOM_ID = urlParams.get('room');
+        
+        // 初始化 UI
+        updateLanguage();
+
+        // --- SocketManager 類別定義 ---
+        // 這個類別負責所有與 Socket.IO 伺服器的通訊邏輯
+        class SocketManager {
+            constructor(serverUrl, roomId, uiCallbacks) {
+                this.socket = io(serverUrl);
+                this.ROOM_ID = roomId;
+                this.currentHostSid = null; // 房長 SID
+                this.uiCallbacks = uiCallbacks; // 外部傳入的 UI 更新函式集合
+
+                this._setupEventListeners();
+            }
+
+            // 設定所有 Socket.IO 事件監聽器
+            _setupEventListeners() {
+                this.socket.on("connect", () => {
+                    console.log("連線成功，身分證 ID:", this.socket.id);
+                    this.joinRoom(this.ROOM_ID); // 連線成功後立即加入房間
+                    if (this.uiCallbacks.onConnect) {
+                        this.uiCallbacks.onConnect(this.socket.id);
+                    }
+                });
+
+                this.socket.on("room_state", (state) => {
+                    this.currentHostSid = state.host_sid; // 更新房長 SID
+                    if (this.uiCallbacks.onRoomStateUpdate) {
+                        this.uiCallbacks.onRoomStateUpdate(state, this.socket.id);
+                    }
+                });
+
+                this.socket.on("all_ready", (data) => {
+                    if (this.uiCallbacks.onAllReady) {
+                        this.uiCallbacks.onAllReady(data);
+                    }
+                });
+
+                this.socket.on("alarm_set", (data) => {
+                    if (this.uiCallbacks.onAlarmSet) {
+                        this.uiCallbacks.onAlarmSet(data);
+                    }
+                });
+
+                this.socket.on("alarm_triggered", (data) => {
+                    if (this.uiCallbacks.onAlarmTriggered) {
+                        this.uiCallbacks.onAlarmTriggered(data);
+                    }
+                });
+
+                this.socket.on("join_failed", (data) => {
+                    if (this.uiCallbacks.onJoinFailed) {
+                        this.uiCallbacks.onJoinFailed(data);
+                    }
+                });
+
+                this.socket.on("game_started", () => {
+                    if (this.uiCallbacks.onGameStarted) {
+                        this.uiCallbacks.onGameStarted();
+                    }
+                });
+            }
+
+            // 發送加入房間請求
+            joinRoom(roomId) {
+                if (roomId) {
+                    this.socket.emit("join_room", { room_id: roomId });
+                }
+            }
+
+            // 發送準備/取消準備狀態
+            sendReadyStatus(isReady) {
+                if (isReady) {
+                    this.socket.emit("player_ready", { room_id: this.ROOM_ID });
+                } else {
+                    this.socket.emit("player_unready", { room_id: this.ROOM_ID });
+                }
+            }
+
+            // 發送鬧鐘設定時間 (只有房長能發送)
+            sendAlarmTime(time) {
+                this.socket.emit("set_alarm", { room_id: this.ROOM_ID, time: time });
+            }
+
+            // 發送遊戲開始指令 (倒數結束後發送)
+            sendStartGame() {
+                this.socket.emit("start_game", { room_id: this.ROOM_ID });
+            }
+
+            // 判斷當前玩家是否為房長
+            isHost() {
+                return this.socket.id === this.currentHostSid;
+            }
+        }
+
+        // --- UI 回呼函式定義 ---
+        // 這些函式會被 SocketManager 呼叫，用來更新介面
+        const uiCallbacks = {
+            onConnect: (socketId) => {
+                // 連線成功時的 UI 處理，目前沒有特別需要
+            },
+            onRoomStateUpdate: (state, currentSocketId) => {
+                // 1. 先把所有圓圈變暗，隱藏所有 Ready 字樣
+                document.querySelectorAll('.character-circle').forEach(el => {
+                    el.style.opacity = "0.2";
+                });
+                document.querySelectorAll('.ready-label').forEach(el => el.style.visibility = "hidden");
+
+                // 2. 根據伺服器傳來的玩家資料進行點亮
+                for (const sid in state.players) {
+                    const player = state.players[sid];
+                    const slot = document.getElementById(`slot-${player.color}`);
+                    if (slot) {
+                        slot.querySelector('.character-circle').style.opacity = "1.0"; // 變亮
+                        if (player.ready) {
+                            slot.querySelector('.ready-label').style.visibility = "visible"; // 顯示 Ready!
+                        }
+                    }
+                }
+
+                // 3. 更新當前玩家的按鈕亮度 (變暗代表已準備)
+                if (state.players[currentSocketId] && state.players[currentSocketId].ready) {
+                    readyButton.classList.add('active'); // 加入 active 類別使其變暗
+                } else {
+                    readyButton.classList.remove('active'); // 移除類別恢復原始亮度
+                }
+            },
+            onAllReady: (data) => {
+                // 1. 固定畫面：禁用按鈕，防止玩家在倒數期間取消準備
+                readyButton.disabled = true;
+                readyButton.style.cursor = "not-allowed";
+                readyButton.style.opacity = "0.6";
+
+                // 2. 顯示倒數遮罩
+                const overlay = document.getElementById('countdown-overlay');
+                const num = document.getElementById('countdown-number');
+                overlay.style.display = 'flex';
+                
+                let count = data.countdown;
+                num.textContent = count;
+
+                const timer = setInterval(() => {
+                    count--;
+                    if (count <= 0) {
+                        clearInterval(timer);
+                        num.textContent = "GO!";
+                        // 3. 倒數結束，向伺服器發送遊戲開始指令
+                        socketManager.sendStartGame(); // 使用 SocketManager 發送
+                    } else {
+                        num.textContent = count;
+                    }
+                }, 1000);
+            },
+            onAlarmSet: (data) => {
+                // 房長設定完時間，大家進入睡眠狀態
+                document.getElementById('sleep-overlay').style.display = 'flex';
+                console.log("鬧鐘已設定，進入睡眠模式...");
+            },
+            onAlarmTriggered: (data) => {
+                // 時間到！移除睡眠遮罩，跳轉（顯現）回大廳
+                document.getElementById('sleep-overlay').style.display = 'none';
+                console.log("時間到！喚醒玩家！");
+                // 這裡可以加入播放鬧鐘鈴聲的邏輯
+            },
+            onJoinFailed: (data) => {
+                if (data.reason === 'full') {
+                    alert(translations[currentLang].room_full);
+                    // 重新整理頁面讓玩家可以重新輸入房號
+                    window.location.href = window.location.pathname;
+                }
+            },
+            onGameStarted: () => {
+                console.log("伺服器確認：遊戲正式開始！");
+                // 這裡未來可以切換到 Canvas 遊戲畫面或隱藏大廳元素
+            }
+        };
+
+        // --- 程式啟動點 ---
+        // 1. 處理房間 ID 輸入
+        if (!ROOM_ID) {
+            ROOM_ID = prompt(translations[currentLang].room_prompt, "room-" + Math.floor(Math.random() * 1000));
+        }
+        document.getElementById('displayRoomId').textContent = ROOM_ID;
+
+        // 2. 實例化 SocketManager
+        const socketManager = new SocketManager("http://127.0.0.1:5000", ROOM_ID, uiCallbacks);
+
+        // --- UI 事件綁定 ---
+        // 綁定 Ready 按鈕點擊事件
+        function sendReady() {
+            const isCurrentlyReady = readyButton.classList.contains('active');
+            socketManager.sendReadyStatus(!isCurrentlyReady); // 切換狀態
+        }
+
+        // 綁定邀請連結複製事件
+        function copyInviteLink() {
+            const inviteUrl = window.location.origin + window.location.pathname + "?room=" + ROOM_ID;
+            navigator.clipboard.writeText(inviteUrl).then(() => {
+                alert(translations[currentLang].invite_success);
+            });
+        }
+
+        // 綁定鬧鐘時間點擊事件 (房長專用)
+        alarmClock.style.cursor = "default";
+        alarmClock.onclick = () => {
+            if (socketManager.isHost()) { // 使用 SocketManager 判斷是否為房長
+                const time = prompt(translations[currentLang].host_prompt);
+                if (time) {
+                    socketManager.sendAlarmTime(time); // 使用 SocketManager 發送
+                }
+            }
+        };
+
+        // 接收伺服器確認遊戲開始的廣播 (現在由 SocketManager 處理並呼叫 uiCallbacks.onGameStarted)
+        // socket.on("game_started", () => { ... }); // 這行現在不需要了
+
+        /**
+         * 當玩家按下 READY 按鈕時觸發
+         * 會根據按鈕當前狀態決定是「準備」還是「取消準備」
+         */
+        // function sendReady() { ... } // 這個函式現在已經被重新定義在程式啟動點下方
+    </script>
+</body>
+</html>

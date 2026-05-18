@@ -4,11 +4,13 @@ class GameRoom:
         self.players = {}       # socket_id -> player info
         self.alarm_time = None  # UTC Unix timestamp
         self.max_players = 4
+        self.host_sid = None    # 房長的身分證號 (不顯示，僅邏輯判斷)
 
     def add_player(self, sid, color):
         if len(self.players) >= self.max_players:
             return False
         self.players[sid] = {"color": color, "ready": False}
+        if self.host_sid is None: self.host_sid = sid
         return True
 
     def remove_player(self, sid):
@@ -19,5 +21,6 @@ class GameRoom:
             "room_id": self.room_id,
             "players": self.players,
             "alarm_time": self.alarm_time,
-            "count": len(self.players)
+            "count": len(self.players),
+            "host_sid": self.host_sid
         }
