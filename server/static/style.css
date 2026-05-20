@@ -1,0 +1,413 @@
+/* ------------------------------------------------------------------ */
+/* Lobby 專用 CSS      
+   這個檔案為大廳頁面定義視覺風格、元件佈局、按鈕樣式、遮罩與模態框效果。   
+   HTML 元素與 app.js 行為邏輯共同構成完整的互動體驗。                  
+*/
+:root {
+    --player-blue: #54a0ff;
+    --player-green: #5fcf80;
+    --player-pink: #ff80bf;
+    --player-red: #ff4d4d;
+}
+
+/* 全域樣式：重設盒模型，讓寬度與高度計算更可預期 */
+* {
+    box-sizing: border-box;
+}
+
+/* 佈局與版面設定：將 lobby 置中，固定背景與文字風格 */
+body {
+    background-color: #ffebd0;
+    color: #7a7570;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    margin: 0;
+    overflow: hidden;
+}
+
+/* 鬧鐘時間顯示：大字體提示目前時刻，房長點擊可進入設定模式 */
+.alarm-clock {
+    font-size: 3.5rem;
+    font-weight: bold;
+    margin-bottom: 50px;
+    color: #a69076;
+    text-shadow: none;
+}
+
+/* 玩家插槽列：4 個角色圓形與準備文字，根據 room_state 更新顯示狀態 */
+.players-container {
+    display: flex;
+    gap: 60px;
+    margin-bottom: 100px;
+    height: 150px;
+    align-items: flex-end;
+}
+
+/* 房主王冠與個人箭頭樣式 */
+.host-crown {
+    font-size: 1.8rem;
+    margin-bottom: -5px;
+    visibility: hidden;
+    z-index: 5;
+}
+
+.me-arrow {
+    display: flex; /* 讓箭頭和文字可以垂直排列 */
+    flex-direction: column;
+    align-items: center; /* 水平置中 */
+    font-size: 1.2rem; /* 箭頭符號的大小 */
+    margin-top: 12px;
+    visibility: hidden;
+    color: #ff0000;
+}
+
+.me-arrow span {
+    font-size: 1.2rem; /* "You" 文字會比箭頭小一點 */
+    margin-top: 4px; /* 箭頭和文字之間的間距 */
+    font-weight: bold;
+}
+
+.player-slot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 125px;
+}
+
+.ready-label {
+    color: #ff4949;
+    font-weight: bold;
+    margin-bottom: 10px;
+    font-size: 1.2rem;
+    visibility: hidden;
+    text-transform: uppercase;
+}
+
+.character-circle {
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    background-color: #d1cec7;
+    opacity: 0.15;
+    transition: all 0.4s ease;
+}
+
+.blue { background-color: var(--player-blue); }
+.green { background-color: var(--player-green); }
+.pink { background-color: var(--player-pink); }
+.red { background-color: var(--player-red); }
+
+/* READY 按鈕：只有玩家端可見，按下後會送出 ready/unready 事件給後端 */
+.ready-button {
+    background-color: #fa5c5c;
+    color: white;
+    border: 3px solid #e05252;
+    padding: 15px 60px;
+    font-size: 1.5rem;
+    display: none;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    box-shadow: none;
+}
+
+.ready-button:hover {
+    background-color: #c83f3f;
+}
+
+.ready-button:active {
+    transform: none;
+}
+
+.ready-button.active {
+    background-color: #ae2f2f;
+    transform: none;
+}
+
+.room-info {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    text-align: right;
+    color: #a69076;
+    font-size: 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.lang-btn,
+.invite-btn {
+    background: none;
+    border: 2px solid #d1cec7;
+    color: #a69076;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.invite-btn {
+    font-size: 0.8rem;
+}
+
+.invite-btn:hover,
+.lang-btn:hover {
+    background-color: #d1cec7;
+    color: white;
+}
+
+/* 倒數計時遮罩：遊戲準備完成後顯示倒數畫面 */
+/* 倒數計時遮罩：當伺服器通知 all_ready 時顯示，倒數結束後開始遊戲 */
+#countdown-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(242, 237, 228, 0.95);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: 8rem;
+    color: #ff0000;
+    z-index: 100;
+}
+
+#text-starting {
+    font-size: 1.5rem;
+    margin-bottom: 20px;
+    color: #7a7570;
+}
+
+#alarm-hint {
+    color: #ff4d4d;
+    font-size: 1.1rem;
+    margin-top: -30px;
+    margin-bottom: 30px;
+    font-weight: bold;
+    visibility: hidden;
+}
+
+#sleep-overlay .sleep-icon {
+    font-size: 5rem;
+}
+
+#display-set-alarm-time {
+    font-size: 2rem;
+    margin-top: 10px;
+    color: #e94560;
+}
+
+/* 睡眠遮罩：房長設定鬧鐘後顯示，讓玩家進入待命狀態並等待鬧鐘觸發 */
+#sleep-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: #1a1a2e;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #e94560;
+    z-index: 90;
+}
+
+.sleep-text {
+    font-size: 2rem;
+    margin-top: 20px;
+    letter-spacing: 5px;
+}
+
+#room-full-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 120;
+    color: white;
+}
+
+.room-full-content {
+    text-align: center;
+}
+
+.room-full-icon {
+    font-size: 5rem;
+}
+
+.room-full-text {
+    font-size: 2.5rem;
+    margin-top: 20px;
+    margin-bottom: 30px;
+}
+
+#btn-try-another-room {
+    padding: 15px 30px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    background-color: #54a0ff;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+#btn-try-another-room:hover {
+    background-color: #3a80d0;
+}
+
+/* 時間選擇器模態框：房長控管起床時間設定，透過 JS 控制顯示與隱藏 */
+#time-picker-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 110;
+}
+
+.time-picker-content {
+    background: #ffebd0;
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+}
+
+.time-display {
+    display: flex;
+    align-items: center;
+    font-size: 4rem;
+    font-weight: bold;
+    color: #7a7570;
+}
+
+.time-part {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+}
+
+.separator {
+    margin: 0 10px;
+}
+
+.time-btn {
+    background: #d1cec7;
+    border: none;
+    border-radius: 5px;
+    width: 50px;
+    height: 30px;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #7a7570;
+    transition: background-color 0.2s;
+}
+
+.time-btn:hover {
+    background-color: #a69076;
+    color: white;
+}
+
+.time-btn.up::before { content: '▲'; }
+.time-btn.down::before { content: '▼'; }
+
+.picker-actions {
+    display: flex;
+    gap: 15px;
+}
+
+.picker-actions button {
+    padding: 10px 20px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+#set-time-btn {
+    background-color: #5fcf80;
+    color: white;
+}
+
+#set-time-btn:hover {
+    background-color: #40a050;
+}
+
+#cancel-time-btn {
+    background-color: #fa5c5c;
+    color: white;
+}
+
+#cancel-time-btn:hover {
+    background-color: #c83f3f;
+}
+
+#time-remaining-hint {
+    color: white;
+    margin-top: 15px;
+    font-size: 1.2rem;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 5px 15px;
+    border-radius: 20px;
+}
+
+/* 畫面右下角警告字體 */
+#speaker-warning {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    color: #ff4d4d;
+    font-weight: bold;
+    background: rgba(255, 235, 208, 0.9);
+    padding: 10px 15px;
+    border: 2px solid #ff4d4d;
+    border-radius: 8px;
+    display: none;
+    z-index: 200;
+}
+
+/* 測試音量按鈕樣式 - 固定在左下角 */
+.test-vol-btn {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    background-color: var(--player-blue);
+    color: white;
+    border: 3px solid #3a80d0;
+    padding: 10px 30px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    z-index: 50;
+}
+
+.test-vol-btn:hover {
+    background-color: #3a80d0;
+}

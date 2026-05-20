@@ -7,11 +7,11 @@ class GameRoom:
         self.max_players = 4    # 房間上限
         self.host_sid = None    # 房長的 Socket ID (第一位進來的玩家)
 
-    def add_player(self, sid, color):
+    def add_player(self, sid):
         """嘗試將玩家加入房間"""
         if len(self.players) >= self.max_players:
             return False # 房間已滿
-        self.players[sid] = {"color": color, "ready": False}
+        self.players[sid] = {"ready": False}
         # 如果房間目前沒人，該玩家自動成為房長
         if self.host_sid is None: self.host_sid = sid
         return True
