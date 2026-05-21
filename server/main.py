@@ -14,6 +14,7 @@ import webview
 
 from game_room import GameRoom
 from system_helper import SystemHelper
+from constants import ServerEvent # 引入伺服器事件常數
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -93,7 +94,7 @@ async def connect(sid, environ):
     
     # 偵測硬體狀態並立即告知前端
     is_speaker = await asyncio.to_thread(SystemHelper.get_is_speaker)
-    await sio.emit("hardware_status", {"is_speaker": is_speaker}, to=sid)
+    await sio.emit(ServerEvent.HARDWARE_STATUS, {"is_speaker": is_speaker}, to=sid)
 
     # 玩家連線時，由後端直接啟動音效播放
     state.play_lobby_bgm()
@@ -116,7 +117,7 @@ async def disconnect(sid):
             room.host_sid = next(iter(room.players))
             print(f"[room] host changed: {room.host_sid}")
 
-        await sio.emit("room_state", room.get_state(), room=room_id)
+        await sio.emit(ServerEvent.ROOM_STATE, room.get_state(), room=room_id)
 
 
 # --- Lobby 玩家房間流程 ---
@@ -127,19 +128,19 @@ async def join_room(sid, data):
     room = state.rooms.setdefault(room_id, GameRoom(room_id))
 
     if len(room.players) >= room.max_players:
-        await sio.emit("join_failed", {"reason": "full"}, to=sid)
+        await sio.emit(ServerEvent.JOIN_FAILED, {"reason": "full"}, to=sid)
         return
 
     room.add_player(sid)
 
     await sio.enter_room(sid, room_id)
-    await sio.emit("room_state", room.get_state(), room=room_id)
+    await sio.emit(ServerEvent.ROOM_STATE, room.get_state(), room=room_id)
     print(f"[room] {sid} joined {room_id}")
 
     # 房間滿 4 人時通知 game_client 可以訂閱這個房間。
     if len(room.players) == room.max_players:
         print(f"[room] {room_id} is full; assigning game client")
-        await sio.emit("assign_room", {"room_id": room_id})
+        await sio.emit(ServerEvent.ASSIGN_ROOM, {"room_id": room_id})
 
 
 async def hardware_monitor():
@@ -151,7 +152,7 @@ async def hardware_monitor():
         is_speaker = await asyncio.to_thread(SystemHelper.get_is_speaker)
         # 只有在狀態發生變化時才發送通知，減少通訊開銷
         if is_speaker != last_status:
-            await sio.emit("hardware_status", {"is_speaker": is_speaker})
+            await sio.emit(ServerEvent.HARDWARE_STATUS, {"is_speaker": is_speaker})
             last_status = is_speaker
         # 每 1 秒輪詢一次，兼顧即時性與效能
         await asyncio.sleep(1)
@@ -166,11 +167,11 @@ async def player_ready(sid, data):
         return
 
     room.players[sid]["ready"] = True
-    await sio.emit("room_state", room.get_state(), room=room_id)
+    await sio.emit(ServerEvent.ROOM_STATE, room.get_state(), room=room_id)
 
     if len(room.players) == room.max_players and all(p["ready"] for p in room.players.values()):
         print(f"[room] all players ready in {room_id}")
-        await sio.emit("all_ready", {"countdown": 3}, room=room_id)
+        await sio.emit(ServerEvent.ALL_READY, {"countdown": 3}, room=room_id)
 
 
 @sio.event
@@ -182,7 +183,7 @@ async def player_unready(sid, data):
         return
 
     room.players[sid]["ready"] = False
-    await sio.emit("room_state", room.get_state(), room=room_id)
+    await sio.emit(ServerEvent.ROOM_STATE, room.get_state(), room=room_id)
 
 
 # --- 鬧鐘流程 ---
@@ -209,7 +210,7 @@ async def alarm_monitor():
 
                 if -30 < diff <= 1:
                     print(f"[alarm] trigger room {room_id} at {room.alarm_time}")
-                    await sio.emit("alarm_triggered", {"time": room.alarm_time}, room=room_id)
+                    await sio.emit(ServerEvent.ALARM_TRIGGERED, {"time": room.alarm_time}, room=room_id)
                     await asyncio.to_thread(SystemHelper.set_webview_topmost) # 鬧鐘響起時將視窗置頂
                     room.alarm_time = None
             except Exception as e:
@@ -239,10 +240,10 @@ async def set_alarm(sid, data):
         room.alarm_time = time_str
         state.alarm_updated_event.set()
         state.stop_lobby_bgm()  # 鬧鐘設定完成後停止大廳音樂
-        await sio.emit("alarm_set", {"time": time_str}, room=room_id)
+        await sio.emit(ServerEvent.ALARM_SET, {"time": time_str}, room=room_id)
     else:
         reason = "Need four players before setting alarm" if len(room.players) < room.max_players else "Only host can set alarm"
-        await sio.emit("error_msg", {"message": reason}, to=sid)
+        await sio.emit(ServerEvent.ERROR_MSG, {"message": reason}, to=sid)
 
 
 @sio.event
@@ -251,11 +252,11 @@ async def test_alarm_sound(sid, data=None):
     print(f"[server] test_alarm_sound request from {sid}")
     duration = state.play_test_alarm()
     if duration > 0:
-        await sio.emit("test_alarm_status", {"status": "started"})
+        await sio.emit(ServerEvent.TEST_ALARM_STATUS, {"status": "started"})
         # 等待音效播放結束
         await asyncio.sleep(duration)
         state.resume_lobby_bgm()
-        await sio.emit("test_alarm_status", {"status": "finished"})
+        await sio.emit(ServerEvent.TEST_ALARM_STATUS, {"status": "finished"})
 
 
 @sio.event
@@ -263,7 +264,7 @@ async def start_game(sid, data):
     """倒數結束後由 lobby 通知同房間所有 client 進入遊戲。"""
     room_id = data.get("room_id")
     if room_id in state.rooms:
-        await sio.emit("game_started", {}, room=room_id)
+        await sio.emit(ServerEvent.GAME_STARTED, {}, room=room_id)
 
 
 # --- Game client 房間訂閱流程 ---
@@ -275,8 +276,8 @@ async def request_game_room(sid, data):
     for room_id, room in state.rooms.items():
         if len(room.players) == room.max_players:
             print(f"[game_client] assigning {sid} to room {room_id}")
-            await sio.enter_room(sid, room_id)
-            await sio.emit("assign_room", {"room_id": room_id}, to=sid)
+            await sio.enter_room(sid, room_id) # 將 game_client 加入房間
+            await sio.emit(ServerEvent.ASSIGN_ROOM, {"room_id": room_id}, to=sid) # 告知 game_client 房間 ID
             return
     print(f"[game_client] no full room available for {sid}")
 
@@ -289,11 +290,11 @@ async def subscribe_game_room(sid, data):
     room_id = data.get("room_id")
     room = state.rooms.get(room_id)
     if not room:
-        await sio.emit("error_msg", {"message": "room not found"}, to=sid)
+        await sio.emit(ServerEvent.ERROR_MSG, {"message": "room not found"}, to=sid)
         return
 
     await sio.enter_room(sid, room_id)
-    await sio.emit("game_room_subscribed", {"room_id": room_id}, to=sid)
+    await sio.emit(ServerEvent.GAME_ROOM_SUBSCRIBED, {"room_id": room_id}, to=sid)
     print(f"[game_client] {sid} subscribed to room {room_id}")
 
 

@@ -18,7 +18,7 @@ server_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "serv
 if server_dir not in sys.path:
     sys.path.append(server_dir)
 
-from system_helper import SystemHelper
+from system_helper import SystemHelper  # type: ignore
 
 class GameEngine:
     def __init__(self):
