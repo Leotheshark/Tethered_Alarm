@@ -24,3 +24,15 @@ class ServerEvent:
 
     # Game Client Subscription
     GAME_ROOM_SUBSCRIBED = "game_room_subscribed"
+
+    # In-game Position Sync
+    PLAYER_MOVE = "player_move"
+
+    # Disconnect & Surrender
+    TEAMMATE_DISCONNECTED = "teammate_disconnected"
+    TEAMMATE_TIMEOUT = "teammate_timeout"
+    GAME_OVER = "game_over"
+
+    # Mini-game
+    START_MINIGAME = "start_minigame"   # 伺服器廣播給所有 game_client，通知載入指定小遊戲
+    GAME_EVENT = "game_event"           # 小遊戲內的即時事件（pellet、gate、pacman 位置等）廣播中繼

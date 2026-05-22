@@ -26,6 +26,7 @@ class ServerState:
         self.monitor_started = False
         self.colors = ["blue", "green", "pink", "red"]
         self.alarm_updated_event = asyncio.Event()
+        self.timeout_tasks = {}  # { (room_id, color): asyncio.Task }，追蹤斷線倒數任務
 
         # 音效資源路徑
         self.bgm_path = os.path.join(base_dir, "..", "game_client", "assets", "sounds", "bgm_loop.ogg")
@@ -102,22 +103,40 @@ async def connect(sid, environ):
 
 @sio.event
 async def disconnect(sid):
-    """玩家離線時從房間移除，必要時轉移房主或刪除空房。"""
+    """玩家或 game_client 離線時清理房間狀態並觸發斷線流程。"""
     print(f"[server] disconnected: {sid}")
+
+    # 處理 lobby 玩家斷線
     for room_id, room in list(state.rooms.items()):
-        if sid not in room.players:
+        if sid in room.players:
+            room.remove_player(sid)
+            if not room.players:
+                state.rooms.pop(room_id)
+                continue
+            if room.host_sid == sid:
+                room.host_sid = next(iter(room.players))
+                print(f"[room] host changed: {room.host_sid}")
+            await sio.emit(ServerEvent.ROOM_STATE, room.get_state(), room=room_id)
+
+    # 處理 game_client 斷線：廣播通知並啟動 60 秒倒數
+    for room_id, room in list(state.rooms.items()):
+        if sid not in room.game_client_sids:
             continue
+        color = room.game_client_sids.pop(sid)
+        print(f"[server] game_client {sid} ({color}) disconnected from {room_id}")
+        await sio.emit(ServerEvent.TEAMMATE_DISCONNECTED,
+                       {"player_id": sid, "color": color}, room=room_id)
+        task = asyncio.create_task(_teammate_timeout(room_id, color))
+        state.timeout_tasks[(room_id, color)] = task
+        break
 
-        room.remove_player(sid)
-        if not room.players:
-            state.rooms.pop(room_id)
-            continue
 
-        if room.host_sid == sid:
-            room.host_sid = next(iter(room.players))
-            print(f"[room] host changed: {room.host_sid}")
-
-        await sio.emit(ServerEvent.ROOM_STATE, room.get_state(), room=room_id)
+async def _teammate_timeout(room_id, color):
+    """60 秒後若隊友仍未重連，廣播 teammate_timeout 允許投降。"""
+    await asyncio.sleep(60)
+    print(f"[server] teammate_timeout: {color} in {room_id}")
+    await sio.emit(ServerEvent.TEAMMATE_TIMEOUT, {"color": color}, room=room_id)
+    state.timeout_tasks.pop((room_id, color), None)
 
 
 # --- Lobby 玩家房間流程 ---
@@ -261,10 +280,24 @@ async def test_alarm_sound(sid, data=None):
 
 @sio.event
 async def start_game(sid, data):
-    """倒數結束後由 lobby 通知同房間所有 client 進入遊戲。"""
+    """倒數結束後由 lobby 通知同房間所有 client 進入遊戲，並指定要載入的小遊戲。"""
     room_id = data.get("room_id")
     if room_id in state.rooms:
         await sio.emit(ServerEvent.GAME_STARTED, {}, room=room_id)
+        # 隨機或固定選擇小遊戲；目前固定為 reverse_pacman
+        await sio.emit(
+            ServerEvent.START_MINIGAME,
+            {"game": "reverse_pacman"},
+            room=room_id,
+        )
+
+
+@sio.event
+async def game_event(sid, data):
+    """轉發小遊戲內的即時事件封包給同房其他所有 game_client（排除發送者）。"""
+    room_id = data.get("room_id")
+    if room_id:
+        await sio.emit(ServerEvent.GAME_EVENT, data, room=room_id, skip_sid=sid)
 
 
 # --- Game client 房間訂閱流程 ---
@@ -294,8 +327,34 @@ async def subscribe_game_room(sid, data):
         return
 
     await sio.enter_room(sid, room_id)
-    await sio.emit(ServerEvent.GAME_ROOM_SUBSCRIBED, {"room_id": room_id}, to=sid)
-    print(f"[game_client] {sid} subscribed to room {room_id}")
+
+    # 依訂閱順序指派顏色，讓每個 game_client 有唯一的角色顏色
+    color = state.colors[room.game_client_count % len(state.colors)]
+    room.game_client_count += 1
+
+    room.game_client_sids[sid] = color
+
+    await sio.emit(ServerEvent.GAME_ROOM_SUBSCRIBED, {"room_id": room_id, "player_color": color}, to=sid)
+    print(f"[game_client] {sid} subscribed to room {room_id} as {color}")
+
+
+# --- 玩家位置同步 ---
+@sio.event
+async def player_move(sid, data):
+    """接收玩家位置封包並轉發給同房其他所有 game_client（排除發送者）。"""
+    room_id = data.get("room_id")
+    if room_id:
+        await sio.emit(ServerEvent.PLAYER_MOVE, data, room=room_id, skip_sid=sid)
+
+
+# --- 投降流程 ---
+@sio.event
+async def surrender(sid, data):
+    """任一玩家選擇投降，廣播 game_over 給同房所有人。"""
+    room_id = data.get("room_id")
+    if room_id:
+        print(f"[server] surrender from {sid} in {room_id}")
+        await sio.emit(ServerEvent.GAME_OVER, {"reason": "surrender"}, room=room_id)
 
 
 # --- 啟動與視窗管理 ---
@@ -323,14 +382,22 @@ def run_server():
     uvicorn.run(app, host="0.0.0.0", port=5000, log_level="error")
 
 
+class LobbyAPI:
+    """暴露給 JavaScript 呼叫的 Python API，用於控制 pywebview 視窗生命週期。"""
+    def close_lobby(self):
+        if webview.windows:
+            webview.windows[0].destroy()
+
+
 def start_window():
-    """開啟 pywebview lobby 視窗。"""
+    """開啟 pywebview lobby 視窗，並掛載 LobbyAPI 供 JS 呼叫。"""
     webview.create_window(
         "Tethered Alarm",
         "http://127.0.0.1:5000",
         width=1000,
         height=700,
         resizable=False,
+        js_api=LobbyAPI(),
     )
     webview.start(debug=False)
 

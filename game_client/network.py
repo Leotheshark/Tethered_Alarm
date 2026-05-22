@@ -21,6 +21,8 @@ class GameNetwork:
         self.engine = engine
         self.server_url = server_url
         self.room_id = room_id
+        self.player_id = None    # 連線後由 socket SID 決定
+        self.player_color = "blue"  # 伺服器指派後更新
 
         # 建立可自動重連的 Socket.IO client，避免 server 比 game_client 晚啟動時直接失敗。
         self.sio = socketio.Client(
@@ -40,6 +42,12 @@ class GameNetwork:
         self.sio.on("game_started", self._on_game_started)
         self.sio.on("assign_room", self._on_assign_room)
         self.sio.on("game_room_subscribed", self._on_game_room_subscribed)
+        self.sio.on("player_move", self._on_player_move)
+        self.sio.on("teammate_disconnected", self._on_teammate_disconnected)
+        self.sio.on("teammate_timeout", self._on_teammate_timeout)
+        self.sio.on("game_over", self._on_game_over)
+        self.sio.on("start_minigame", self._on_start_minigame)
+        self.sio.on("game_event", self._on_game_event)
 
         # 網路連線放在背景執行緒，避免阻塞 Pygame 主迴圈。
         self.thread = threading.Thread(target=self._start, daemon=True)
@@ -58,7 +66,8 @@ class GameNetwork:
             break
 
     def _on_connect(self):
-        """連上 server 後，請求綁定目前可用的滿員房間。"""
+        """連上 server 後，記錄自身 player_id 並請求綁定房間。"""
+        self.player_id = self.sio.sid
         print("[GameNetwork] connected, SID:", self.sio.sid)
         try:
             # 若啟動時已由環境變數指定 ROOM_ID，直接訂閱該房間。
@@ -84,11 +93,16 @@ class GameNetwork:
             self.change_room(room_id)
 
     def _on_game_room_subscribed(self, data):
-        """server 確認訂閱完成；同步本地 room_id 狀態。"""
+        """server 確認訂閱完成；同步 room_id 與伺服器指派的角色顏色。"""
         room_id = data.get("room_id")
         if room_id:
             self.room_id = room_id
-        print(f"[GameNetwork] subscribed to game room: {room_id}")
+        color = data.get("player_color")
+        if color:
+            self.player_color = color
+            if hasattr(self.engine, "on_color_assigned"):
+                self.engine.on_color_assigned(color)
+        print(f"[GameNetwork] subscribed to game room: {room_id}, color: {self.player_color}")
 
     def change_room(self, room_id):
         """切換 game_client 目前監聽的房間。"""
@@ -120,6 +134,63 @@ class GameNetwork:
                 self.engine.sound_manager.stop(channel_name="alarm", fade_ms=500)
         except Exception as e:
             print(f"[GameNetwork] game_started callback error: {e}")
+
+    def send_position(self, x, y, dx, dy):
+        """廣播本地玩家的當前位置與移動方向給同房其他人。"""
+        if not self.player_id or not self.room_id:
+            return
+        try:
+            self.sio.emit("player_move", {
+                "room_id": self.room_id,
+                "player_id": self.player_id,
+                "color": self.player_color,
+                "x": x, "y": y, "dx": dx, "dy": dy,
+            })
+        except Exception as e:
+            print(f"[GameNetwork] send_position error: {e}")
+
+    def _on_player_move(self, data):
+        """收到其他玩家的位置封包，轉交給 GameEngine 更新遠端角色。"""
+        if hasattr(self.engine, "on_player_moved"):
+            self.engine.on_player_moved(data)
+
+    def _on_teammate_disconnected(self, data):
+        if hasattr(self.engine, "on_teammate_disconnected"):
+            self.engine.on_teammate_disconnected(data)
+
+    def _on_teammate_timeout(self, data):
+        if hasattr(self.engine, "on_teammate_timeout"):
+            self.engine.on_teammate_timeout(data)
+
+    def _on_game_over(self, data):
+        if hasattr(self.engine, "on_game_over"):
+            self.engine.on_game_over(data)
+
+    def _on_start_minigame(self, data):
+        """伺服器通知要載入哪個小遊戲（背景執行緒）。"""
+        if hasattr(self.engine, "on_start_minigame"):
+            self.engine.on_start_minigame(data)
+
+    def _on_game_event(self, data):
+        """接收同房其他客戶端廣播的小遊戲即時事件（背景執行緒）。"""
+        if hasattr(self.engine, "on_game_event"):
+            self.engine.on_game_event(data)
+
+    def send_game_event(self, payload: dict):
+        """廣播小遊戲內的即時事件封包給同房其他人。"""
+        if not self.room_id:
+            return
+        try:
+            self.sio.emit("game_event", {**payload, "room_id": self.room_id})
+        except Exception as e:
+            print(f"[GameNetwork] send_game_event error: {e}")
+
+    def send_surrender(self):
+        """發送投降事件給伺服器。"""
+        try:
+            self.sio.emit("surrender", {"room_id": self.room_id})
+        except Exception as e:
+            print(f"[GameNetwork] send_surrender error: {e}")
 
     def send_ready(self, is_ready=True):
         """保留給未來 Pygame 端直接送出 ready/unready 狀態時使用。"""

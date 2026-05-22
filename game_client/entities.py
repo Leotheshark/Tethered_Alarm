@@ -32,22 +32,93 @@ class Ghost(Entity):
     2. 動畫狀態機：根據移動速度或輸入，決定現在該換成哪一個 visual_key。
     3. 同步機制：預留接收伺服器資料的介面，實作 Week 3 的 LERP 插值平滑移動。
     """
+    RADIUS = 24  # 繪製半徑，同時用於邊界夾緊
+
     def __init__(self, color_key="blue"):
         super().__init__(640, 360, visual_key=f"ghost_{color_key}_idle")
+        self.color_key = color_key  # 保存顏色鍵以供 visual_key 更新與 fallback 繪製使用
         self.speed = 200
         self.state = "IDLE" # 基礎狀態機：IDLE, WALK, DEAD
+        self.current_dx = 0  # 上一幀的原始輸入方向，供網路廣播使用
+        self.current_dy = 0
 
     def move(self, dx, dy, dt):
         """
         計算位移並根據方向更新狀態（進而影響 visual_key）。
+        dx/dy 為 0 時仍需呼叫，以便將狀態重設回 IDLE。
         """
-        pass
+        # 記錄原始輸入方向（正規化前），供網路位置廣播使用
+        self.current_dx = dx
+        self.current_dy = dy
+
+        # 斜向移動時正規化，避免速度變成水平/垂直的 √2 倍
+        if dx != 0 and dy != 0:
+            dx *= 0.7071
+            dy *= 0.7071
+
+        self.x += dx * self.speed * dt
+        self.y += dy * self.speed * dt
+
+        # 邊界夾緊，確保角色不會跑出畫面
+        self.x = max(self.RADIUS, min(1280 - self.RADIUS, self.x))
+        self.y = max(self.RADIUS, min(720 - self.RADIUS, self.y))
+
+        # 根據是否有移動更新狀態與對應的視覺鍵
+        self.state = "WALK" if (dx != 0 or dy != 0) else "IDLE"
+        self.visual_key = f"ghost_{self.color_key}_{self.state.lower()}"
 
     def update(self, dt):
         """
         處理物理更新與動畫影格切換。
         """
         pass
+
+class RemoteGhost(Entity):
+    """
+    遠端玩家實體：以 LERP 插值平滑渲染位置，Dead Reckoning 補償封包延遲。
+    """
+    LERP_SPEED = 12   # 越高越貼近目標（生硬），越低越平滑（但落後越多）
+    DR_TIMEOUT = 0.2  # 超過此秒數未收到更新時啟動 Dead Reckoning
+    SPEED = 200       # 與 Ghost 相同，供 Dead Reckoning 預測位移使用
+    RADIUS = 24
+
+    def __init__(self, player_id, color_key="green"):
+        super().__init__(640, 360, visual_key=f"ghost_{color_key}_idle")
+        self.player_id = player_id
+        self.color_key = color_key
+        self.target_x = 640.0  # 伺服器權威位置（目標）
+        self.target_y = 360.0
+        self._dr_dx = 0.0      # Dead Reckoning 使用的上次速度方向
+        self._dr_dy = 0.0
+        self._stale_time = 0.0  # 距上次收到封包的秒數
+        self.disconnected = False  # 隊友斷線標記，由 Engine 設定
+
+    def apply_server_update(self, x, y, dx, dy):
+        """收到伺服器轉發的封包時，更新目標位置與速度方向。"""
+        self.target_x = x
+        self.target_y = y
+        self._dr_dx = dx
+        self._dr_dy = dy
+        self._stale_time = 0.0
+        state = "walk" if (dx != 0 or dy != 0) else "idle"
+        self.visual_key = f"ghost_{self.color_key}_{state}"
+
+    def update(self, dt):
+        """每幀：Dead Reckoning 預測目標，LERP 平滑逼近渲染位置。"""
+        self._stale_time += dt
+
+        # Dead Reckoning：封包過舊時以上次速度繼續預測目標位置
+        if self._stale_time > self.DR_TIMEOUT and (self._dr_dx != 0 or self._dr_dy != 0):
+            self.target_x += self._dr_dx * self.SPEED * dt
+            self.target_y += self._dr_dy * self.SPEED * dt
+            self.target_x = max(self.RADIUS, min(1280 - self.RADIUS, self.target_x))
+            self.target_y = max(self.RADIUS, min(720 - self.RADIUS, self.target_y))
+
+        # LERP：render 位置每幀平滑逼近 target 位置
+        factor = min(1.0, self.LERP_SPEED * dt)
+        self.x += (self.target_x - self.x) * factor
+        self.y += (self.target_y - self.y) * factor
+
 
 class StaticObject(Entity):
     """
