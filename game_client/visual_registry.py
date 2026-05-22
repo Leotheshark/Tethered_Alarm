@@ -28,12 +28,29 @@ class VisualRegistry:
         - filename: 檔案名稱 (例: 'hero.png')
         - tag: 資源類型，用於渲染層級參考 (例: 'BACKGROUND', 'SPRITE', 'UI')
         """
-        # 1. 檢查快取，避免重複載入
-        # 2. 拼接路徑 (建議相對於 assets/sprites 目錄)
-        # 3. 使用 pygame.image.load 載入
-        # 4. 關鍵步驟：執行 .convert_alpha() 處理去背與渲染優化
-        # 5. 存入快取與標籤庫
-        pass
+        if key in cls._cache:
+            return cls._cache[key]
+
+        # 取得 game_client 目錄路徑
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        
+        # 嘗試可能的路徑 (相容單數 sprite 與複數 sprites 資料夾名稱)
+        possible_paths = [
+            os.path.join(base_path, "assets", "sprites", filename),
+            os.path.join(base_path, "assets", "sprite", filename)
+        ]
+
+        path = next((p for p in possible_paths if os.path.exists(p)), None)
+
+        if path is None:
+            print(f"[VisualRegistry] ❌ 錯誤: 在以下位置都找不到 {filename}:\n  - {possible_paths[0]}\n  - {possible_paths[1]}")
+            return None
+
+        image = pygame.image.load(path).convert_alpha()
+        cls._cache[key] = image
+        cls._tags[key] = tag
+        print(f"[VisualRegistry] ✅ 成功載入: {key} <- {path}")
+        return image
 
     @classmethod
     def get_surface(cls, key):

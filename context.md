@@ -57,9 +57,12 @@
 ### Week 3: Social Sync & Game Logic (社交同步與遊戲邏輯)
 - **週目標**：實現核心的「連帶拉扯（Tethered）」感，讓每個人的即時進度實時影響整個團隊。
 - **遊戲動態與交互 (Movement & Interaction)**：
+  - [x] 實作 `VisualRegistry` 資源中心與 `EntityManager` 實體管理器，達成資源解耦。
+  - [x] 實作 `TestEntity` 與 `Renderer` 支援 5x5 精靈圖自動切割與置中渲染，並通過 `sprite_test`。
+  - [x] 實現使用 Win32 API `GetAsyncKeyState` 進行硬體級按鍵偵測，完全繞過輸入法 (IME) 干擾。
   - [ ] 製作遊戲角色及移動、待機動畫。
   - [ ] 實作碰撞箱等遊戲交互元素。
-  - [ ] 實現WASD對遊戲角色進行操控。
+  - [x] 實現 WASD 對遊戲角色進行位移操控。
 - **網路同步 (Sync)**：
   - [ ] 整合**推測航法（Dead Reckoning）**與線性插值（LERP），補償網路延遲，確保隊友角色的移動平滑、不抖動。
 - **資料視覺化 (Monitor)**：

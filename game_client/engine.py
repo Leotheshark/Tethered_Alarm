@@ -9,7 +9,8 @@ import time
 from input_handler import InputHandler
 from states import StateMachine
 from renderer import Renderer
-from entities import Ghost, EntityManager
+from entities import Ghost
+from entity_manager import EntityManager
 from sound_manager import SoundManager
 from network import GameNetwork
 

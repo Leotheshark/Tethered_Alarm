@@ -62,34 +62,37 @@ class StaticObject(Entity):
         super().__init__(x, y, visual_key)
         self.collidable = True # 是否具備碰撞功能
 
-class EntityManager:
+class TestEntity(Entity):
     """
-    實體管理員 (Entity Manager)
+    測試用 5x5 精靈圖實體 (Test Entity)
     
     職責：
-    1. 容器功能：持有遊戲中所有的 Entity 實例。
-    2. 批量操作：一鍵執行所有物件的 update。
-    3. 渲染橋樑：提供 draw_all 所需的實體清單，並依據物件類型進行簡單排序。
+    1. 影格管理：管理 5x5 格式大圖的當前播放影格索引 (0-24)。
+    2. 切割計算：根據 frame_index 計算在大圖上的矩形範圍 (Rect)。
+    3. 自動播放：在 update 中根據時間自動循環切換影格。
     """
-    def __init__(self):
-        self.entities = []
+    def __init__(self, x, y, visual_key):
+        super().__init__(x, y, visual_key)
+        self.frame_index = 0
+        self.animation_timer = 0
+        self.animation_speed = 0.05  # 每 0.05 秒切換一次影格
+        self.rows = 5
+        self.cols = 5
 
-    def add(self, entity):
-        """
-        將新的物件加入世界。
-        可以根據 tag 決定加入哪一個層級的清單。
-        """
-        self.entities.append(entity)
+    def update(self, dt):
+        """更新動畫影格循環"""
+        self.animation_timer += dt
+        if self.animation_timer >= self.animation_speed:
+            self.animation_timer = 0
+            # 在 25 個影格 (5x5) 之間循環播放
+            self.frame_index = (self.frame_index + 1) % (self.rows * self.cols)
 
-    def update_all(self, dt):
-        for entity in self.entities:
-            entity.update(dt)
-
-    def draw_all(self, screen):
-        """
-        注意：這裡不直接呼叫 entity.draw()。
-        而是應該由 Renderer 負責，這裡僅提供資料。
-        符合「視覺資源由註冊中心統一調度」的原則。
-        """
-        # TODO: 實作根據 Z-index 或 Y 座標排序繪製，確保物件遮擋關係正確
-        pass
+    def get_sprite_rect(self, surface):
+        """計算並回傳當前影格在 spritesheet 上的 Rect 範圍，供 Renderer 呼叫"""
+        frame_w = surface.get_width() // self.cols
+        frame_h = surface.get_height() // self.rows
+        
+        col = self.frame_index % self.cols
+        row = self.frame_index // self.cols
+        
+        return pygame.Rect(col * frame_w, row * frame_h, frame_w, frame_h)
