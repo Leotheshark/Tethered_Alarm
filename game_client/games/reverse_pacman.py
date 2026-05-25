@@ -25,58 +25,52 @@ G = 3   # Gate（閘門，初始關閉）
 B = 4   # Button（按鈕，踩下開啟對應閘門）
 S = 5   # Spike（釘板，踩上後速度減半 3 秒）
 
-# ─── 地圖定義（21 行 × 33 列，TILE_SIZE=40px）────────────────────────────────
-# 每格 40×40px，地圖左上角偏移 MAP_OFFSET_X=20, MAP_OFFSET_Y=60
+# ─── 地圖定義（17 行 × 32 列，TILE_SIZE=40px）────────────────────────────────
 # 按鈕與閘門的交叉配對設計：
-#   Button A (row=3,col=5)  ↔ Gate A (row=3,col=25)  — 藍綠側踩 → 紅粉側閘門開
-#   Button B (row=17,col=5) ↔ Gate B (row=17,col=25) — 紅粉側踩 → 藍綠側閘門開
-#   Button C (row=3,col=27) ↔ Gate C (row=3,col=7)   — 紅粉側踩 → 藍綠側閘門開
-#   Button D (row=17,col=27)↔ Gate D (row=17,col=7)  — 藍綠側踩 → 紅粉側閘門開
+#   Button A (3,4)   ↔ Gate D (16,27) — 左上按鈕開啟右下閘門
+#   Button B (14,4)  ↔ Gate A (3,25)  — 左下按鈕開啟右上閘門
+#   Button C (3,26)  ↔ Gate C (12,6)  — 右上按鈕開啟左下閘門
+#   Button D (14,26) ↔ Gate B (5,7)   — 右下按鈕開啟左上閘門
 MAP_LAYOUT = [
-    # 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32
-    [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],  # 0
-    [W, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W],  # 1
-    [W, P, W, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, W, W, W, W, P, W, W, W, P, W, W, W, W, P, W],  # 2
-    [W, P, W, W, B, W, W, W, P, W, W, W, W, W, W, W, W, W, W, W, W, W, P, W, W, G, B, W, W, W, W, P, W],  # 3
-    [W, P, W, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, W, W, W, W, P, W, W, W, P, W, W, W, W, P, W],  # 4
-    [W, P, P, P, P, P, P, G, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W],  # 5
-    [W, P, W, W, P, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, P, W, W, W, P, W, P, W, W, W, P, P, W],  # 6
-    [W, P, W, W, P, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, P, W, W, W, P, W, P, W, W, W, P, P, W],  # 7
-    [W, P, P, P, P, W, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W, P, P, P, P, W],  # 8
-    [W, W, W, W, P, W, P, W, W, W, W, W, P, W, W, W, W, W, P, W, W, W, W, W, P, W, P, W, W, W, W, W, W],  # 9
-    [W, P, P, P, P, P, P, P, P, P, P, P, P, W, W, W, W, W, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W],  # 10
-    [W, W, W, W, P, W, P, W, W, W, W, W, P, W, W, W, W, W, P, W, W, W, W, W, P, W, P, W, W, W, W, W, W],  # 11
-    [W, P, P, P, P, W, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W, P, P, P, P, W],  # 12
-    [W, P, W, W, P, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, P, W, W, W, P, W, P, W, W, W, P, P, W],  # 13
-    [W, P, W, W, P, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, P, W, W, W, P, W, P, W, W, W, P, P, W],  # 14
-    [W, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W],  # 15
-    [W, P, W, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, W, W, W, W, P, W, W, W, P, W, W, W, W, P, W],  # 16
-    [W, P, W, W, B, W, W, W, P, W, W, W, W, W, W, W, W, W, W, W, W, W, P, W, W, G, B, W, W, W, W, P, W],  # 17
-    [W, P, W, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, W, W, W, W, P, W, W, W, P, W, W, W, W, P, W],  # 18
-    [W, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W],  # 19
-    [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],  # 20
+    # 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+    [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],  # 0
+    [W, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W],  # 1
+    [W, P, W, W, P, W, W, W, P, W, W, W, W, W, W, W, P, W, W, W, W, W, P, W, W, W, P, W, W, W, W, W],  # 2
+    [W, P, W, W, B, W, W, W, P, W, W, W, W, W, W, W, P, W, W, W, W, W, P, P, P, G, B, W, W, W, W, W],  # 3
+    [W, P, W, W, P, W, W, W, P, W, W, W, W, W, W, W, P, W, W, W, W, W, P, W, W, W, P, W, W, W, W, W],  # 4
+    [W, P, P, P, P, P, P, G, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W],  # 5
+    [W, P, W, W, P, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, P, W, W, W, P, W, P, W, W, W, P, W],  # 6
+    [W, P, W, W, P, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, P, W, W, W, P, W, P, W, W, W, P, W],  # 7
+    [W, P, P, P, P, W, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W, P, P, P, W],  # 8
+    [W, W, W, W, P, W, P, W, W, W, W, W, P, W, W, P, W, W, P, W, W, W, W, W, P, W, P, W, W, W, W, W],  # 9
+    [W, P, P, P, P, P, P, P, P, P, P, P, P, W, W, P, W, W, P, P, P, P, P, P, P, P, P, P, P, P, P, W],  # 10
+    [W, W, W, W, P, W, P, W, W, W, W, W, P, W, W, P, W, W, P, W, W, W, W, W, P, W, P, W, W, W, W, W],  # 11
+    [W, W, W, W, P, W, G, W, W, W, W, W, P, W, W, P, W, W, P, W, W, W, W, W, P, W, P, W, W, W, W, W],  # 11
+    [W, P, P, P, P, W, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W, P, P, P, W],  # 12
+    [W, P, W, W, B, W, W, W, P, W, W, W, W, W, W, W, W, W, W, W, P, W, P, W, W, W, B, W, W, W, P, W],  # 13
+    [W, P, W, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, W, W, P, W, P, W, W, W, P, W, W, W, P, W],  # 14
+    [W, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, G, P, P, P, W],  # 15
+    [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],  # 16
 ]
 
-ROWS = len(MAP_LAYOUT)      # 21
-COLS = len(MAP_LAYOUT[0])   # 33
+ROWS = len(MAP_LAYOUT)      # 17
+COLS = len(MAP_LAYOUT[0])   # 32
 TILE_SIZE = 40
-MAP_OFFSET_X = 20
-MAP_OFFSET_Y = 60
 
 # ─── 玩家初始出生位置（格座標，依顏色）──────────────────────────────────────
 SPAWN_TILES = {
     "blue":  (1, 1),    # 左上
-    "green": (19, 31),  # 右下
-    "pink":  (1, 31),   # 右上
-    "red":   (19, 1),   # 左下
+    "green": (15, 30),  # 右下（移動到新的倒數第二行）
+    "pink":  (1, 30),   # 右上
+    "red":   (15, 1),   # 左下（移動到新的倒數第二行）
 }
 
 # Pac-Man 初始出生格
-PACMAN_SPAWN_TILE = (10, 16)  # 地圖正中央
+PACMAN_SPAWN_TILE = (8, 16)  # 地圖中心
 
 # ─── 遊戲數值常數 ─────────────────────────────────────────────────────────────
-PLAYER_SPEED        = 120   # 像素 / 秒
-PACMAN_BASE_SPEED   = 110   # 正常速度
+PLAYER_SPEED        = 250   # 像素 / 秒
+PACMAN_BASE_SPEED   = 100   # 正常速度
 PACMAN_FAST_SPEED   = 165   # 被獵食後暫時加速（1.5 倍）
 CATCH_RADIUS        = 18    # 捕捉碰撞半徑（像素）
 MAX_RESCUES         = 2     # 每位玩家被救援的上限次數
@@ -90,24 +84,24 @@ PACMAN_AI_INTERVAL  = 0.10  # 授權客戶端廣播 Pac-Man 位置的時間間�
 # 按鈕 → 閘門 的映射（格座標對）
 # 鍵：button (row, col)，值：gate (row, col)
 BUTTON_GATE_MAP = {
-    (3,  4):  (3,  25),   # Button A 開 Gate A
-    (17, 4):  (17, 25),   # Button B 開 Gate B
-    (3,  26): (3,  7),    # Button C 開 Gate C（右→左，交叉）
-    (17, 26): (17, 7),    # Button D 開 Gate D（右→左，交叉）
+    (3,  4):  (16, 27),   # Button A (左上) -> Gate (右下)
+    (14, 4):  (3,  25),   # Button B (左下) -> Gate (右上)
+    (3,  26): (12, 6),    # Button C (右上) -> Gate (左下)
+    (14, 26): (5,  7),    # Button D (右下) -> Gate (左上)
 }
 
 
 def tile_center(row, col):
     """回傳指定格子中心點的像素座標 (x, y)。"""
-    x = MAP_OFFSET_X + col * TILE_SIZE + TILE_SIZE // 2
-    y = MAP_OFFSET_Y + row * TILE_SIZE + TILE_SIZE // 2
+    x = col * TILE_SIZE + TILE_SIZE // 2
+    y = row * TILE_SIZE + TILE_SIZE // 2
     return x, y
 
 
 def pixel_to_tile(px, py):
     """將像素座標轉換為格座標 (row, col)，用於碰撞查詢。"""
-    col = int((px - MAP_OFFSET_X) / TILE_SIZE)
-    row = int((py - MAP_OFFSET_Y) / TILE_SIZE)
+    col = int(px / TILE_SIZE)
+    row = int(py / TILE_SIZE)
     return row, col
 
 

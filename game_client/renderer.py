@@ -1,27 +1,20 @@
 # --- 渲染模組 ---
 import pygame
 from visual_registry import VisualRegistry
+from constants import COLORS
 
-# 小遊戲地圖磚片繪製常數（與 reverse_pacman.py 對齊）
-_TILE_SIZE = 40
-_MAP_OFFSET_X = 20
-_MAP_OFFSET_Y = 60
 # 磚片類型 → 顏色對照
 _TILE_COLORS = {
-    0: (30, 30, 60),      # W 牆壁：深藍色
-    1: (20, 20, 30),      # E 空地：背景色
-    2: (20, 20, 30),      # P pellet：空地底色（pellet 另外畫圓點）
+    0: (0, 0, 100),       # W 牆壁：深藍色
+    1: (255, 230, 210),   # E 空地：背景色
+    2: (255, 230, 210),   # P pellet：空地底色（pellet 另外畫圓點）
     3: (180, 60, 60),     # G 閘門（關閉）：紅色
     4: (60, 180, 60),     # B 按鈕：綠色
     5: (180, 100, 40),    # S 釘板：橘棕色
 }
-# 玩家顏色 → RGB
-_PLAYER_COLORS = {
-    "blue":  (60, 120, 255),
-    "green": (60, 200, 80),
-    "pink":  (255, 100, 180),
-    "red":   (220, 60, 60),
-}
+
+# 玩家顏色 → RGB 從 constants.COLORS 對照表轉換而來，確保一致性。
+_PLAYER_COLORS = COLORS
 
 class Renderer:
     def __init__(self, screen):
@@ -30,15 +23,13 @@ class Renderer:
         self.font_large = pygame.font.SysFont(None, 52)
 
     def clear(self):
-        """用深藍色背景清空畫面"""
-        self.screen.fill((20, 20, 30))
+        """用背景色清空畫面"""
+        self.screen.fill(_TILE_COLORS[1])
 
     def draw_ui(self, clock):
-        """繪製介面資訊 (如 FPS)"""
-        fps = int(clock.get_fps())
-        fps_text = self.font.render(f"FPS: {fps}", True, (180, 180, 180))
-        self.screen.blit(fps_text, (10, 10))
-
+        """繪製介面資訊"""
+        pass
+    
     def draw_world(self, entity_manager):
         """繪製所有遊戲世界的物體"""
         # 取得所有實體並根據 Y 座標排序 (簡單的遮擋處理：下方的物體擋住上方的物體)
@@ -104,6 +95,8 @@ class Renderer:
         tile_map, open_gates, pellets_left, pacman, players
         """
         tile_map = render_data.get("tile_map", [])
+        tile_size = render_data.get("tile_size", 40)
+        tile_colors = render_data.get("tile_colors", _TILE_COLORS)
         players  = render_data.get("players", {})
         pacman   = render_data.get("pacman", {})
 
@@ -114,21 +107,21 @@ class Renderer:
         for r in range(rows):
             for c in range(cols):
                 tile = tile_map[r][c]
-                tx = _MAP_OFFSET_X + c * _TILE_SIZE
-                ty = _MAP_OFFSET_Y + r * _TILE_SIZE
-                color = _TILE_COLORS.get(tile, (20, 20, 30))
-                pygame.draw.rect(self.screen, color, (tx, ty, _TILE_SIZE, _TILE_SIZE))
+                tx = c * tile_size
+                ty = r * tile_size
+                color = tile_colors.get(tile, _TILE_COLORS[2])
+                pygame.draw.rect(self.screen, color, (tx, ty, tile_size, tile_size))
 
                 # 磚片細節：pellet 畫白色小圓點，按鈕畫亮綠正方形，釘板畫斜線
                 if tile == 2:  # P
-                    cx = tx + _TILE_SIZE // 2
-                    cy = ty + _TILE_SIZE // 2
-                    pygame.draw.circle(self.screen, (230, 230, 230), (cx, cy), 4)
+                    cx = tx + tile_size // 2
+                    cy = ty + tile_size // 2
+                    pygame.draw.circle(self.screen, (0, 255 , 255), (cx, cy), 4)
                 elif tile == 4:  # B 按鈕：中央畫小方塊提示
                     inner = 10
                     pygame.draw.rect(
                         self.screen, (120, 255, 120),
-                        (tx + inner, ty + inner, _TILE_SIZE - inner * 2, _TILE_SIZE - inner * 2)
+                        (tx + inner, ty + inner, tile_size - inner * 2, tile_size - inner * 2)
                     )
 
         # 2. 繪製玩家（依 Y 座標從上到下，避免重疊遮擋問題）
@@ -173,6 +166,7 @@ class Renderer:
 
         # 3. 繪製 Pac-Man（黃色圓形）
         if pacman:
+            # 座標已在遊戲邏輯中包含偏移量，直接使用即可
             pmx = int(pacman.get("x", 0))
             pmy = int(pacman.get("y", 0))
             pygame.draw.circle(self.screen, (255, 220, 0), (pmx, pmy), 18)
@@ -181,7 +175,8 @@ class Renderer:
         # 4. HUD：剩餘 pellet 數量
         pellets_left = render_data.get("pellets_left", 0)
         hud = self.font.render(f"Pellets: {pellets_left}", True, (200, 200, 200))
-        self.screen.blit(hud, (10, 36))
+        sw, sh = self.screen.get_size()
+        self.screen.blit(hud, (sw - hud.get_width() - 20, sh - hud.get_height() - 20))
 
     def display(self):
         """將繪製內容更新到螢幕上"""

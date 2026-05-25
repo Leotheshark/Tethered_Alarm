@@ -3,7 +3,7 @@ import os
 import pygame
 
 # 確保測試腳本能正確匯入 game_client 內的模組
-client_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+client_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "game_client"))
 if client_dir not in sys.path:
     sys.path.append(client_dir)
 
@@ -19,7 +19,7 @@ def main():
     目的：驗證 5x5 Spritesheet 切割與自動動畫播放功能
     """
     pygame.init()
-    screen = pygame.display.set_mode((1280, 720))
+    screen = pygame.display.set_mode((1280, 720), pygame.FULLSCREEN | pygame.SCALED)
     pygame.display.set_caption("Tethered Alarm - Sprite Rendering Test")
     clock = pygame.time.Clock()
 

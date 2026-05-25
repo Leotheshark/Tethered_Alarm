@@ -8,7 +8,7 @@
   - **狀態模式 (State Pattern)**：使用 StateManager 類別管理 `LOBBY`, `ALARM`, `GAME` 狀態切換，避免大型 if-else。
   - **數據標準化 (Dataclasses)**：所有網路同步封包應使用 `dataclasses` 定義，確保型別安全與 Key 名稱一致。
   - **系統層封裝**：Win32 API（防睡眠、視窗置頂）需統一封裝於 `SystemHelper` 工具類中。
-  - **資源解耦**：音效與圖片資源由 `SoundManager` 或 `AssetLoader` 統一調度，不直接硬編碼於遊戲邏輯中。
+  - **資源解耦**：音效與圖片資源由 `SoundManager` 或 `VisualRegistry` 統一調度，不直接硬編碼於遊戲邏輯中。
 
 ##  專案目標與核心機制
 - **核心概念**：一款網路連線、2~4人多人在線協作的解謎鬧鐘遊戲。遊戲會是類似bomber-man、pac-man的2D遊戲。

@@ -6,6 +6,7 @@ import pygame
 import os
 import sys
 import time
+import ctypes
 from input_handler import InputHandler
 from states import StateMachine
 from renderer import Renderer
@@ -157,7 +158,7 @@ class GameEngine:
             return
 
         print("[Engine] 正在建立遊戲視窗...")
-        self.screen = pygame.display.set_mode((1280, 720))
+        self.screen = pygame.display.set_mode((1280, 720), pygame.FULLSCREEN | pygame.SCALED)
         pygame.display.set_caption("Co-up: Tethered Alarm")
         self.renderer = Renderer(self.screen)
         self.game_window_shown = True
