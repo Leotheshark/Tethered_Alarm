@@ -27,3 +27,17 @@ Desktop.ini
 
 # 隨機生成的日誌或測試檔案
 *.log
+
+# 機密資訊與 API 金鑰（絕對不能上傳）
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.*
+credentials.*
+
+# Claude Code 本機設定（含個人 hook、金鑰等）
+.claude/settings.local.json
+.claude/.credentials.json
+CLAUDE.md

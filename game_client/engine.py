@@ -96,10 +96,12 @@ class GameEngine:
             print("[Engine] DEBUG_MODE: 跳過大廳，直接開啟遊戲視窗")
             self._pending_show_window = True
 
-        # DEBUG_MINIGAME=1：視窗開啟後立即載入 reverse_pacman，不等伺服器廣播
-        if os.environ.get('DEBUG_MINIGAME') == '1':
-            print("[Engine] DEBUG_MINIGAME: 直接載入 reverse_pacman")
-            self._pending_minigame = "reverse_pacman"
+        # DEBUG_MINIGAME=1：跳過 server 廣播，等湊滿 DEBUG_PLAYERS 人後本地直接啟動 reverse_pacman
+        self._debug_minigame_pending = os.environ.get('DEBUG_MINIGAME') == '1'
+        self._debug_required_players = int(os.environ.get('DEBUG_PLAYERS', '1'))
+        self._debug_wait_log_timer = 0.0
+        if self._debug_minigame_pending:
+            print(f"[Engine] DEBUG_MINIGAME: 等湊滿 {self._debug_required_players} 人後啟動 reverse_pacman")
 
         # 2.7. 建立網路客戶端，連接到伺服器並監聽 alarm/game 事件
         # room id 可由環境變數 ROOM_ID 覆蓋，否則使用預設 "default"
@@ -157,13 +159,61 @@ class GameEngine:
             return
 
         print("[Engine] 正在建立遊戲視窗...")
-        self.screen = pygame.display.set_mode((1280, 720), pygame.FULLSCREEN | pygame.SCALED)
-        pygame.display.set_caption("Co-up: Tethered Alarm")
+        # DEBUG_WINDOWED=1：以視窗模式建立，方便同時開多個 client 排列在螢幕上
+        if os.environ.get('DEBUG_WINDOWED') == '1':
+            self.screen = pygame.display.set_mode((1280, 720))
+            # 視窗建立後再移動到指定位置（由 DEBUG_WINDOW_POS=x,y 指定）
+            pos = os.environ.get('DEBUG_WINDOW_POS')
+            if pos:
+                try:
+                    x, y = (int(v) for v in pos.split(','))
+                    from ctypes import windll
+                    hwnd = pygame.display.get_wm_info()['window']
+                    windll.user32.MoveWindow(hwnd, x, y, 1280, 720, True)
+                except Exception as _e:
+                    print(f"[Engine] DEBUG_WINDOW_POS 失敗：{_e}")
+        else:
+            self.screen = pygame.display.set_mode((1280, 720), pygame.FULLSCREEN | pygame.SCALED)
+        caption = os.environ.get('DEBUG_TITLE', 'Co-up: Tethered Alarm')
+        pygame.display.set_caption(caption)
         self.renderer = Renderer(self.screen)
         self.game_window_shown = True
 
+    def _build_ordered_player_id_list(self):
+        """所有 client 對 player_id_list 達成共識：按 server 指派的顏色順序排序，
+        缺顏色的（還沒收到 game_room_subscribed）排在最後並依 sid 排序。"""
+        color_order = {"blue": 0, "green": 1, "pink": 2, "red": 3}
+        entries = []
+        # 本地玩家
+        if self.network.player_id:
+            entries.append((self.player.color_key, self.network.player_id))
+        # 遠端玩家
+        for pid, ghost in self.remote_ghosts.items():
+            entries.append((ghost.color_key, pid))
+
+        def sort_key(item):
+            color, pid = item
+            rank = color_order.get(color, 99)
+            return (rank, pid or "")
+
+        entries.sort(key=sort_key)
+        return [pid for _color, pid in entries]
+
     def _flush_pending(self):
         """在主迴圈中處理來自背景執行緒的旗標請求。"""
+        # DEBUG_MINIGAME：輪詢人數，湊滿才設旗標進入小遊戲
+        if self._debug_minigame_pending and self.game_window_shown:
+            present = len(self.remote_ghosts) + 1
+            if present >= self._debug_required_players:
+                print(f"[Engine] DEBUG_MINIGAME: 人數已達 {present}/{self._debug_required_players}，啟動 reverse_pacman")
+                self._pending_minigame = "reverse_pacman"
+                self._debug_minigame_pending = False
+            else:
+                self._debug_wait_log_timer += 1
+                if self._debug_wait_log_timer >= 60:  # 約每秒印一次（主迴圈 60fps）
+                    self._debug_wait_log_timer = 0
+                    print(f"[Engine] DEBUG_MINIGAME 等待玩家 ({present}/{self._debug_required_players})...")
+
         if self._pending_play_alarm:
             self._pending_play_alarm = False
             self.sound_manager.set_master_volume(0.5)
@@ -205,9 +255,9 @@ class GameEngine:
             self._pending_minigame = None
             game_cls = _MINIGAME_CLASSES.get(game_name)
             if game_cls:
-                # 以房間內所有玩家 ID 的清單初始化小遊戲
-                player_id_list = list(self.remote_ghosts.keys())
-                player_id_list.insert(0, self.network.player_id)  # 本地玩家排第一
+                # 所有 client 必須產出相同順序的 player_id_list，否則顏色分配與 authority 會分歧
+                player_id_list = self._build_ordered_player_id_list()
+                print(f"[Engine] minigame player_id_list: {player_id_list}")
                 self.active_game = game_cls(self.network, player_id_list)
                 self.active_game.on_enter()
                 print(f"[Engine] minigame started: {game_name}")

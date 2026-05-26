@@ -91,7 +91,7 @@ class Renderer:
 
     def draw_game(self, render_data: dict, local_color: str):
         """
-        繪製 Reverse Pac-Man 小遊戲畫面。
+        繪製 Reverse Pac-Man 小遊戲畫面。相機鎖定在本地玩家身上，超出地圖邊界時鎖在邊緣。
         render_data 由 ReversePacman.get_render_data()
         """
         tile_map = render_data.get("tile_map", [])
@@ -103,12 +103,39 @@ class Renderer:
         rows = len(tile_map)
         cols = len(tile_map[0]) if rows > 0 else 0
 
-        # 1. 繪製地圖磚片
-        for r in range(rows):
-            for c in range(cols):
+        # 相機跟隨：以本地玩家為中心；玩家不存在/未存活時退回地圖中心
+        sw, sh = self.screen.get_size()
+        map_w = cols * tile_size
+        map_h = rows * tile_size
+        local_p = players.get(local_color)
+        if local_p:
+            target_x = local_p.get("x", map_w / 2)
+            target_y = local_p.get("y", map_h / 2)
+        else:
+            target_x, target_y = map_w / 2, map_h / 2
+        cam_x = target_x - sw / 2
+        cam_y = target_y - sh / 2
+        # 鎖邊緣：地圖小於視窗時置中，否則限制在 [0, map - screen]
+        if map_w <= sw:
+            cam_x = (map_w - sw) / 2
+        else:
+            cam_x = max(0, min(cam_x, map_w - sw))
+        if map_h <= sh:
+            cam_y = (map_h - sh) / 2
+        else:
+            cam_y = max(0, min(cam_y, map_h - sh))
+        ox, oy = int(cam_x), int(cam_y)
+
+        # 1. 繪製地圖磚片（只畫視窗範圍內的，省渲染）
+        c_start = max(0, ox // tile_size)
+        c_end = min(cols, (ox + sw) // tile_size + 1)
+        r_start = max(0, oy // tile_size)
+        r_end = min(rows, (oy + sh) // tile_size + 1)
+        for r in range(r_start, r_end):
+            for c in range(c_start, c_end):
                 tile = tile_map[r][c]
-                tx = c * tile_size
-                ty = r * tile_size
+                tx = c * tile_size - ox
+                ty = r * tile_size - oy
                 color = tile_colors.get(tile, _TILE_COLORS[2])
                 pygame.draw.rect(self.screen, color, (tx, ty, tile_size, tile_size))
 
@@ -127,14 +154,14 @@ class Renderer:
         # 2. 繪製玩家（依 Y 座標從上到下，避免重疊遮擋問題）
         sorted_players = sorted(players.items(), key=lambda kv: kv[1].get("y", 0))
         for color, pdata in sorted_players:
-            px = int(pdata.get("x", 0))
-            py = int(pdata.get("y", 0))
+            px = int(pdata.get("x", 0)) - ox
+            py = int(pdata.get("y", 0)) - oy
             alive = pdata.get("alive", True)
             perm_down = pdata.get("permanently_down", False)
             rescue_prog = pdata.get("rescue_progress", 0.0)
             rgb = _PLAYER_COLORS.get(color, (200, 200, 200))
             radius = pdata.get("avatar_size", 15)
-            
+
 
             if perm_down:
                 # 永久倒地：灰色 X 符號
@@ -165,9 +192,8 @@ class Renderer:
 
         # 3. 繪製 Pac-Man（黃色圓形）
         if pacman:
-            # 座標已在遊戲邏輯中包含偏移量，直接使用即可
-            pmx = int(pacman.get("x", 0))
-            pmy = int(pacman.get("y", 0))
+            pmx = int(pacman.get("x", 0)) - ox
+            pmy = int(pacman.get("y", 0)) - oy
             pm_radius = pacman.get("avatar_size", 15)
             pygame.draw.circle(self.screen, (255, 220, 0), (pmx, pmy), pm_radius)
             pygame.draw.circle(self.screen, (200, 160, 0), (pmx, pmy), pm_radius, 2)

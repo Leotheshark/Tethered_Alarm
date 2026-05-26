@@ -321,10 +321,15 @@ async def subscribe_game_room(sid, data):
     # join_room 是給 lobby 玩家用的，會建立 player 資料。
     # subscribe_game_room 只讓 pygame 視窗聽到同房間的 alarm/game 事件。
     room_id = data.get("room_id")
+    if not room_id:
+        await sio.emit(ServerEvent.ERROR_MSG, {"message": "room_id required"}, to=sid)
+        return
+    # DEBUG / 直連情境：若 room 尚未由 lobby 建立，這裡自動補建一個空房間
+    # （只配置 game_client 訂閱所需的最小結構，不會佔用 player slot）
     room = state.rooms.get(room_id)
     if not room:
-        await sio.emit(ServerEvent.ERROR_MSG, {"message": "room not found"}, to=sid)
-        return
+        room = state.rooms.setdefault(room_id, GameRoom(room_id))
+        print(f"[game_client] auto-created room {room_id} on subscribe")
 
     await sio.enter_room(sid, room_id)
 

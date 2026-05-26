@@ -2,6 +2,10 @@
 import pygame
 import math
 
+from sync_helpers import RemoteSyncState, apply_server_update, tick_remote_sync
+
+PLAYER_SPEED = 200  # Ghost 預設移動速度（像素/秒），小遊戲可 import 此常數共用
+
 class Entity:
     """
     實體基礎類別 (Base Entity)
@@ -37,7 +41,7 @@ class Ghost(Entity):
         super().__init__(640, 360, visual_key=f"ghost_{color_key}_idle")
         self.color_key = color_key  # 保存顏色鍵以供 visual_key 更新與 fallback 繪製使用
         self.avatar_size = avatar_size # 統一使用實體的半徑屬性
-        self.speed = 200
+        self.speed = PLAYER_SPEED
         self.state = "IDLE" # 基礎狀態機：IDLE, WALK, DEAD
         self.current_dx = 0  # 上一幀的原始輸入方向，供網路廣播使用
         self.current_dy = 0
@@ -128,49 +132,31 @@ class Ghost(Entity):
 
 class RemoteGhost(Entity):
     """
-    遠端玩家實體：以 LERP 插值平滑渲染位置，Dead Reckoning 補償封包延遲。
+    遠端玩家實體：透過 sync_helpers 套用 LERP + Dead Reckoning，平滑渲染遠端位置。
     """
-    LERP_SPEED = 12   # 越高越貼近目標（生硬），越低越平滑（但落後越多）
-    DR_TIMEOUT = 0.2  # 超過此秒數未收到更新時啟動 Dead Reckoning
-    SPEED = 200       # 與 Ghost 相同，供 Dead Reckoning 預測位移使用
+    SPEED = PLAYER_SPEED  # 與 Ghost 相同，供 Dead Reckoning 預測位移使用
     AVATAR_SIZE = 24
+    # 大廳場景邊界（畫面 1280x720 扣除頭像半徑）
+    _BOUNDS = (AVATAR_SIZE, AVATAR_SIZE, 1280 - AVATAR_SIZE, 720 - AVATAR_SIZE)
+    _DR_TIMEOUT = 0.2  # 大廳對抖動容忍度較高，採用稍寬鬆的超時
 
     def __init__(self, player_id, color_key="green"):
         super().__init__(640, 360, visual_key=f"ghost_{color_key}_idle")
         self.player_id = player_id
         self.color_key = color_key
-        self.target_x = 640.0  # 伺服器權威位置（目標）
-        self.target_y = 360.0
-        self._dr_dx = 0.0      # Dead Reckoning 使用的上次速度方向
-        self._dr_dy = 0.0
-        self._stale_time = 0.0  # 距上次收到封包的秒數
+        self.sync = RemoteSyncState(target_x=640.0, target_y=360.0)
         self.disconnected = False  # 隊友斷線標記，由 Engine 設定
 
     def apply_server_update(self, x, y, dx, dy):
-        """收到伺服器轉發的封包時，更新目標位置與速度方向。"""
-        self.target_x = x
-        self.target_y = y
-        self._dr_dx = dx
-        self._dr_dy = dy
-        self._stale_time = 0.0
+        """收到伺服器轉發的封包時，更新目標位置與速度方向，並切換動畫狀態。"""
+        apply_server_update(self.sync, x, y, dx, dy)
         state = "walk" if (dx != 0 or dy != 0) else "idle"
         self.visual_key = f"ghost_{self.color_key}_{state}"
 
     def update(self, dt):
-        """每幀：Dead Reckoning 預測目標，LERP 平滑逼近渲染位置。"""
-        self._stale_time += dt
-
-        # Dead Reckoning：封包過舊時以上次速度繼續預測目標位置
-        if self._stale_time > self.DR_TIMEOUT and (self._dr_dx != 0 or self._dr_dy != 0):
-            self.target_x += self._dr_dx * self.SPEED * dt
-            self.target_y += self._dr_dy * self.SPEED * dt
-            self.target_x = max(self.AVATAR_SIZE, min(1280 - self.AVATAR_SIZE, self.target_x))
-            self.target_y = max(self.AVATAR_SIZE, min(720 - self.AVATAR_SIZE, self.target_y))
-
-        # LERP：render 位置每幀平滑逼近 target 位置
-        factor = min(1.0, self.LERP_SPEED * dt)
-        self.x += (self.target_x - self.x) * factor
-        self.y += (self.target_y - self.y) * factor
+        """每幀：Dead Reckoning 預測目標 + LERP 平滑逼近渲染位置。"""
+        tick_remote_sync(self, self.sync, dt, self.SPEED,
+                         bounds=self._BOUNDS, dr_timeout=self._DR_TIMEOUT)
 
 
 class StaticObject(Entity):
