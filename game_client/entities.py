@@ -1,5 +1,6 @@
 # --- 實體與管理模組 ---
 import pygame
+import math
 
 class Entity:
     """
@@ -32,11 +33,10 @@ class Ghost(Entity):
     2. 動畫狀態機：根據移動速度或輸入，決定現在該換成哪一個 visual_key。
     3. 同步機制：預留接收伺服器資料的介面，實作 Week 3 的 LERP 插值平滑移動。
     """
-    RADIUS = 24  # 繪製半徑，同時用於邊界夾緊
-
-    def __init__(self, color_key="blue"):
+    def __init__(self, color_key="blue", avatar_size=24):
         super().__init__(640, 360, visual_key=f"ghost_{color_key}_idle")
         self.color_key = color_key  # 保存顏色鍵以供 visual_key 更新與 fallback 繪製使用
+        self.avatar_size = avatar_size # 統一使用實體的半徑屬性
         self.speed = 200
         self.state = "IDLE" # 基礎狀態機：IDLE, WALK, DEAD
         self.current_dx = 0  # 上一幀的原始輸入方向，供網路廣播使用
@@ -60,11 +60,64 @@ class Ghost(Entity):
         self.y += dy * self.speed * dt
 
         # 邊界夾緊，確保角色不會跑出畫面
-        self.x = max(self.RADIUS, min(1280 - self.RADIUS, self.x))
-        self.y = max(self.RADIUS, min(720 - self.RADIUS, self.y))
+        self.x = max(self.avatar_size, min(1280 - self.avatar_size, self.x))
+        self.y = max(self.avatar_size, min(720 - self.avatar_size, self.y))
 
         # 根據是否有移動更新狀態與對應的視覺鍵
         self.state = "WALK" if (dx != 0 or dy != 0) else "IDLE"
+        self.visual_key = f"ghost_{self.color_key}_{self.state.lower()}"
+
+    def move_in_maze(self, dx, dy, dt, tile_size, is_wall_cb):
+        """
+        執行迷宮物理移動，包含走廊吸附與碰撞偵測。
+        :param is_wall_cb: 一個接收 (x, y) 並回傳 bool 的函式，判斷該點是否撞牆。
+        """
+        if dx == 0 and dy == 0:
+            self.current_dx, self.current_dy = 0.0, 0.0
+            return
+
+        move_dist = self.speed * dt
+        # 使用實體自身的半徑進行碰撞偵測
+        radius = self.avatar_size
+        # 吸附容差
+        snap_threshold = tile_size * 0.35
+
+        # 1. 走廊吸附邏輯 (Corridor Snapping)
+        # 計算當前所在格子的中心點
+        grid_col = int(self.x / tile_size)
+        grid_row = int(self.y / tile_size)
+        center_x = grid_col * tile_size + tile_size // 2
+        center_y = grid_row * tile_size + tile_size // 2
+
+        if dx != 0 and dy == 0: # 純水平移動，吸附 Y 軸
+            offset_y = center_y - self.y
+            if abs(offset_y) <= snap_threshold:
+                self.y += math.copysign(min(abs(offset_y), move_dist * 0.8), offset_y)
+        elif dy != 0 and dx == 0: # 純垂直移動，吸附 X 軸
+            offset_x = center_x - self.x
+            if abs(offset_x) <= snap_threshold:
+                self.x += math.copysign(min(abs(offset_x), move_dist * 0.8), offset_x)
+
+        # 2. 嘗試移動並檢查碰撞 (獨立處理 X 與 Y，實現滑牆效果)
+        def check_collision(nx, ny):
+            corners = [(nx-radius, ny-radius), (nx+radius, ny-radius),
+                       (nx-radius, ny+radius), (nx+radius, ny+radius)]
+            return any(is_wall_cb(cx, cy) for cx, cy in corners)
+
+        if dx != 0:
+            new_x = self.x + math.copysign(move_dist, dx)
+            if not check_collision(new_x, self.y):
+                self.x = new_x
+        
+        if dy != 0:
+            new_y = self.y + math.copysign(move_dist, dy)
+            if not check_collision(self.x, new_y):
+                self.y = new_y
+
+        self.current_dx = float(dx)
+        self.current_dy = float(dy)
+        # 更新動畫狀態
+        self.state = "WALK"
         self.visual_key = f"ghost_{self.color_key}_{self.state.lower()}"
 
     def update(self, dt):
@@ -80,7 +133,7 @@ class RemoteGhost(Entity):
     LERP_SPEED = 12   # 越高越貼近目標（生硬），越低越平滑（但落後越多）
     DR_TIMEOUT = 0.2  # 超過此秒數未收到更新時啟動 Dead Reckoning
     SPEED = 200       # 與 Ghost 相同，供 Dead Reckoning 預測位移使用
-    RADIUS = 24
+    AVATAR_SIZE = 24
 
     def __init__(self, player_id, color_key="green"):
         super().__init__(640, 360, visual_key=f"ghost_{color_key}_idle")
@@ -111,8 +164,8 @@ class RemoteGhost(Entity):
         if self._stale_time > self.DR_TIMEOUT and (self._dr_dx != 0 or self._dr_dy != 0):
             self.target_x += self._dr_dx * self.SPEED * dt
             self.target_y += self._dr_dy * self.SPEED * dt
-            self.target_x = max(self.RADIUS, min(1280 - self.RADIUS, self.target_x))
-            self.target_y = max(self.RADIUS, min(720 - self.RADIUS, self.target_y))
+            self.target_x = max(self.AVATAR_SIZE, min(1280 - self.AVATAR_SIZE, self.target_x))
+            self.target_y = max(self.AVATAR_SIZE, min(720 - self.AVATAR_SIZE, self.target_y))
 
         # LERP：render 位置每幀平滑逼近 target 位置
         factor = min(1.0, self.LERP_SPEED * dt)

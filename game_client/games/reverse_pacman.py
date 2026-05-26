@@ -16,6 +16,7 @@ import time
 from collections import deque
 
 from games.base_game import BaseLogicInterface
+from entities import Ghost
 
 # ─── 地圖磚片類型常數 ───────────────────────────────────────────────────────────
 W = 0   # Wall（牆壁）
@@ -53,9 +54,10 @@ MAP_LAYOUT = [
     [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],  # 16
 ]
 
-ROWS = len(MAP_LAYOUT)      # 17
-COLS = len(MAP_LAYOUT[0])   # 32
+ROWS = len(MAP_LAYOUT)      # 25
+COLS = len(MAP_LAYOUT[0])   # 48
 TILE_SIZE = 40
+AVATAR_SIZE = 18
 
 # ─── 玩家初始出生位置（格座標，依顏色）──────────────────────────────────────
 SPAWN_TILES = {
@@ -142,31 +144,35 @@ def bfs_next_step(tile_map, start_row, start_col, goal_row, goal_col):
     return 0, 0  # 找不到路徑
 
 
-class PlayerState:
+class PlayerState(Ghost):
     """單一玩家在小遊戲中的所有狀態資料。"""
 
     def __init__(self, color, spawn_row, spawn_col):
-        cx, cy = tile_center(spawn_row, spawn_col)
-        self.color = color
-        self.x = float(cx)          # 像素座標（浮點數，用於精確移動）
-        self.y = float(cy)
         self.alive = True           # True = 正常行動，False = 被抓住等待救援
-        self.rescue_count = 0       # 已被救援次數，達到 MAX_RESCUES 後永久無法動作
-        self.debuff_timer = 0.0     # 被救援後的速度減半倒數計時
-        self.spike_timer = 0.0      # 踩到釘板後的緩速倒數計時
-        self.rescue_progress = 0.0  # 隊友按 E 救援的進度（秒），達到 RESCUE_HOLD_TIME 完成
-        self.dx = 0.0               # 上一幀的移動方向，供渲染器判斷角色朝向
-        self.dy = 0.0
+        self.rescue_count = 0       # 已被救援次數
+        self.debuff_timer = 0.0     # 被救援後的速度減半倒數
+        self.spike_timer = 0.0      # 踩到釘板後的緩速倒數
+        self.rescue_progress = 0.0  # 隊友救援進度
+
+        super().__init__(color_key=color, avatar_size=AVATAR_SIZE)
+        self.speed = PLAYER_SPEED # 更新為小遊戲專用的速度數值
+        cx, cy = tile_center(spawn_row, spawn_col)
+        self.x, self.y = float(cx), float(cy)
 
     @property
     def speed(self):
         """根據當前狀態決定移動速度（釘板或被救後減半）。"""
         if not self.alive:
             return 0.0
-        base = PLAYER_SPEED
+        # 使用被設定的基礎速度，若無則回退至常數
+        base = getattr(self, '_base_speed', PLAYER_SPEED)
         if self.debuff_timer > 0 or self.spike_timer > 0:
             base *= 0.5
         return base
+
+    @speed.setter
+    def speed(self, value):
+        self._base_speed = value
 
     @property
     def permanently_down(self):
@@ -184,6 +190,7 @@ class PacManState:
         self.y = float(cy)
         self.speed_boost_timer = 0.0    # 吃到 pellet 後短暫加速的倒數計時
         self.current_target_id = None   # 目前追蹤的玩家 ID（字串）
+        self.avatar_size = AVATAR_SIZE  # 讓 Pac-Man 也具備尺寸屬性
 
         # 格子對齊移動：鎖定下一個目標格的中心點，到達後再重新 BFS
         self.next_tile_x = float(cx)    # 目前正在朝向的格中心 X
@@ -327,7 +334,14 @@ class ReversePacman(BaseLogicInterface):
 
         # 1. 更新本地玩家移動
         if local and local.alive and not local.permanently_down:
-            self._move_player(local, self._input_dx, self._input_dy, dt)
+            # 使用封裝在實體中的移動邏輯
+            local.move_in_maze(
+                self._input_dx, self._input_dy, dt, 
+                TILE_SIZE, 
+                lambda px, py: is_wall(self.tile_map, *pixel_to_tile(px, py))
+            )
+            # 移動後處理地圖互動
+            self._handle_tile_interaction(local)
 
         # 2. 更新所有玩家的計時器（debuff、spike）
         for p in self.players.values():
@@ -348,7 +362,7 @@ class ReversePacman(BaseLogicInterface):
                     target.debuff_timer = DEBUFF_DURATION  # 被救後速度減半
                     target.rescue_progress = 0.0
                     self._rescuing_target = None
-                    print(f"[ReversePacman] {target.color} rescued (count={target.rescue_count})")
+                    print(f"[ReversePacman] {target.color_key} rescued (count={target.rescue_count})")
             else:
                 # 目標已復活或消失，停止救援
                 self._rescuing_target = None
@@ -382,11 +396,13 @@ class ReversePacman(BaseLogicInterface):
         """回傳渲染器需要的所有物件資料。"""
         return {
             "tile_map":    self.tile_map,
+            "tile_size":   TILE_SIZE,
             "open_gates":  list(self.open_gates),      # [(row, col), ...]
             "pellets_left": self.pellets_remaining,
             "pacman": {
                 "x": self.pacman.x,
                 "y": self.pacman.y,
+                "avatar_size": self.pacman.avatar_size,
             },
             "players": {
                 color: {
@@ -398,8 +414,9 @@ class ReversePacman(BaseLogicInterface):
                     "rescue_count":   p.rescue_count,
                     "debuff":         p.debuff_timer > 0,
                     "spike":          p.spike_timer > 0,
-                    "dx":             p.dx,
-                    "dy":             p.dy,
+                    "dx":             p.current_dx,
+                    "dy":             p.current_dy,
+                    "avatar_size":    p.avatar_size,
                 }
                 for color, p in self.players.items()
             },
@@ -422,8 +439,8 @@ class ReversePacman(BaseLogicInterface):
             "color": self.local_color,
             "x":     local.x,
             "y":     local.y,
-            "dx":    local.dx,
-            "dy":    local.dy,
+            "dx":    local.current_dx,
+            "dy":    local.current_dy,
             "alive": local.alive,
         }
 
@@ -443,8 +460,8 @@ class ReversePacman(BaseLogicInterface):
             if p and color != self.local_color:
                 p.x = data.get("x", p.x)
                 p.y = data.get("y", p.y)
-                p.dx = data.get("dx", p.dx)
-                p.dy = data.get("dy", p.dy)
+                p.current_dx = data.get("dx", p.current_dx)
+                p.current_dy = data.get("dy", p.current_dy)
                 p.alive = data.get("alive", p.alive)
 
         elif dtype == "pacman_pos" and not self.is_pacman_authority:
@@ -680,7 +697,7 @@ class ReversePacman(BaseLogicInterface):
         player.alive = False
         player.rescue_progress = 0.0
         self.pacman.speed_boost_timer = PACMAN_BOOST_DURATION
-        print(f"[ReversePacman] {player.color} caught! rescue_count={player.rescue_count}")
+        print(f"[ReversePacman] {player.color_key} caught! rescue_count={player.rescue_count}")
 
     def _find_rescue_target(self) -> str | None:
         """

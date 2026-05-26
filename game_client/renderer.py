@@ -1,5 +1,6 @@
 # --- 渲染模組 ---
 import pygame
+import math
 from visual_registry import VisualRegistry
 from constants import COLORS
 
@@ -91,8 +92,7 @@ class Renderer:
     def draw_game(self, render_data: dict, local_color: str):
         """
         繪製 Reverse Pac-Man 小遊戲畫面。
-        render_data 由 ReversePacman.get_render_data() 產生，包含：
-        tile_map, open_gates, pellets_left, pacman, players
+        render_data 由 ReversePacman.get_render_data()
         """
         tile_map = render_data.get("tile_map", [])
         tile_size = render_data.get("tile_size", 40)
@@ -133,6 +133,8 @@ class Renderer:
             perm_down = pdata.get("permanently_down", False)
             rescue_prog = pdata.get("rescue_progress", 0.0)
             rgb = _PLAYER_COLORS.get(color, (200, 200, 200))
+            radius = pdata.get("avatar_size", 15)
+            
 
             if perm_down:
                 # 永久倒地：灰色 X 符號
@@ -143,7 +145,6 @@ class Renderer:
                 pygame.draw.circle(self.screen, (80, 80, 80), (px, py), 16, 3)
                 if rescue_prog > 0:
                     # 進度弧線：順時針從 12 點開始
-                    import math
                     frac = min(rescue_prog / 2.0, 1.0)  # RESCUE_HOLD_TIME=2.0
                     end_angle = -math.pi / 2 + frac * 2 * math.pi
                     pygame.draw.arc(
@@ -152,25 +153,24 @@ class Renderer:
                         -math.pi / 2, end_angle, 4
                     )
             else:
-                # 正常：填色圓形，本地玩家加外框
-                pygame.draw.circle(self.screen, rgb, (px, py), 16)
-                if color == local_color:
-                    pygame.draw.circle(self.screen, (255, 255, 255), (px, py), 16, 2)
+                # 正常：填色圓形
+                pygame.draw.circle(self.screen, rgb, (px, py), radius)
                 # 速度減益提示：外圈閃紫色
                 if pdata.get("debuff") or pdata.get("spike"):
-                    pygame.draw.circle(self.screen, (200, 100, 255), (px, py), 19, 2)
+                    pygame.draw.circle(self.screen, (200, 100, 255), (px, py), radius, 2)
 
             # 玩家顏色標籤（顯示在角色下方）
             label = self.font.render(color[:1].upper(), True, rgb)
-            self.screen.blit(label, (px - label.get_width() // 2, py + 18))
+            self.screen.blit(label, (px - label.get_width() // 2, py + radius + 2))
 
         # 3. 繪製 Pac-Man（黃色圓形）
         if pacman:
             # 座標已在遊戲邏輯中包含偏移量，直接使用即可
             pmx = int(pacman.get("x", 0))
             pmy = int(pacman.get("y", 0))
-            pygame.draw.circle(self.screen, (255, 220, 0), (pmx, pmy), 18)
-            pygame.draw.circle(self.screen, (200, 160, 0), (pmx, pmy), 18, 2)
+            pm_radius = pacman.get("avatar_size", 15)
+            pygame.draw.circle(self.screen, (255, 220, 0), (pmx, pmy), pm_radius)
+            pygame.draw.circle(self.screen, (200, 160, 0), (pmx, pmy), pm_radius, 2)
 
         # 4. HUD：剩餘 pellet 數量
         pellets_left = render_data.get("pellets_left", 0)

@@ -6,7 +6,6 @@ import pygame
 import os
 import sys
 import time
-import ctypes
 from input_handler import InputHandler
 from states import StateMachine
 from renderer import Renderer
