@@ -38,7 +38,9 @@ class Ghost(Entity):
     3. 同步機制：預留接收伺服器資料的介面，實作 Week 3 的 LERP 插值平滑移動。
     """
     def __init__(self, color_key="blue", avatar_size=24):
-        super().__init__(640, 360, visual_key=f"ghost_{color_key}_idle")
+        self.direction = "right" # 當前朝向：left, right
+        super().__init__(640, 360, visual_key=f"{color_key}_{self.direction}")
+        
         self.color_key = color_key  # 保存顏色鍵以供 visual_key 更新與 fallback 繪製使用
         self.avatar_size = avatar_size # 統一使用實體的半徑屬性
         self.speed = PLAYER_SPEED
@@ -46,89 +48,106 @@ class Ghost(Entity):
         self.current_dx = 0  # 上一幀的原始輸入方向，供網路廣播使用
         self.current_dy = 0
 
-    def move(self, dx, dy, dt):
-        """
-        計算位移並根據方向更新狀態（進而影響 visual_key）。
-        dx/dy 為 0 時仍需呼叫，以便將狀態重設回 IDLE。
-        """
-        # 記錄原始輸入方向（正規化前），供網路位置廣播使用
-        self.current_dx = dx
-        self.current_dy = dy
+        # 1x2 動畫屬性
+        self.frame_index = 0
+        self.animation_timer = 0.0
+        self.animation_speed = 0.15  # 每 0.15 秒切換一次影格
 
-        # 斜向移動時正規化，避免速度變成水平/垂直的 √2 倍
+    def move(self, dx, dy, dt, tile_size=32, is_wall_cb=None):
+        """
+        執行物理移動。統一整合斜向位移正規化、滑牆碰撞偵測與全域邊界限制。
+        此演算法同時適用於迷宮（需傳入碰撞回呼）與大廳（使用預設值）。
+        :param is_wall_cb: 一個接收 (x, y) 並回傳 bool 的函式，判斷該點是否撞牆。
+        """
+        self.current_dx, self.current_dy = float(dx), float(dy)
+
+        # 根據水平輸入更新角色朝向（left/right），dx 為 0 時保持上一個方向
+        if dx > 0:
+            self.direction = "right"
+        elif dx < 0:
+            self.direction = "left"
+
+        if dx == 0 and dy == 0:
+            self.state = "IDLE"
+            # 靜止時 visual_key 對應 {color}_{direction}
+            self.visual_key = f"{self.color_key}_{self.direction}"
+            return
+
+        # 1. 斜向移動正規化：確保斜著走的速度與水平/垂直一致 (1.0x 而非 1.414x)
+        nx, ny = dx, dy
         if dx != 0 and dy != 0:
-            dx *= 0.7071
-            dy *= 0.7071
+            nx, ny = dx * 0.7071, dy * 0.7071
 
-        self.x += dx * self.speed * dt
-        self.y += dy * self.speed * dt
+        move_dist_x = abs(nx) * self.speed * dt
+        move_dist_y = abs(ny) * self.speed * dt
 
-        # 邊界夾緊，確保角色不會跑出畫面
+        # 2. 準備碰撞與吸附參數 (以傳入的 tile_size 為準，大廳預設 32)
+        radius = self.avatar_size
+        snap_threshold = tile_size * 0.35  # 吸附閾值，輔助玩家對齊走廊中心
+        grid_col, grid_row = int(self.x / tile_size), int(self.y / tile_size)
+        center_x, center_y = grid_col * tile_size + tile_size // 2, grid_row * tile_size + tile_size // 2
+
+        # 3. 定義內部碰撞檢查：檢查角色矩形四角，若無 callback 則視為不撞牆 (大廳模式)
+        def check_collision(nx, ny):
+            if not is_wall_cb:
+                return False
+            # 檢查角色 bounding box 的四個角落是否進入牆面
+            corners = [(nx-radius, ny-radius), (nx+radius, ny-radius),
+                        (nx-radius, ny+radius), (nx+radius, ny+radius)]
+            return any(is_wall_cb(cx, cy) for cx, cy in corners)
+
+        # 4. 走廊吸附 (Corridor Snapping)
+        # 只有在「即將撞牆」的情況下才執行吸附，這能確保在空地不會有磁吸感。
+        # 當玩家移動時蹭到牆邊，或者在轉角處被卡住時，吸附能幫助玩家對齊走廊中心以順利通過。
+        if is_wall_cb:
+            if dx != 0 and dy == 0:  # 純水平移動
+                # 測試如果不吸附，直接前進是否會撞牆（包含因為 y 座標偏移而蹭到側邊的牆）
+                if check_collision(self.x + math.copysign(move_dist_x, dx), self.y):
+                    offset_y = center_y - self.y
+                    if abs(offset_y) <= snap_threshold:
+                        self.y += math.copysign(min(abs(offset_y), move_dist_x * 1.2), offset_y)
+            elif dy != 0 and dx == 0:  # 純垂直移動
+                # 測試如果不吸附，直接前進是否會撞牆
+                if check_collision(self.x, self.y + math.copysign(move_dist_y, dy)):
+                    offset_x = center_x - self.x
+                    if abs(offset_x) <= snap_threshold:
+                        self.x += math.copysign(min(abs(offset_x), move_dist_y * 1.2), offset_x)
+
+        # 5. 分軸位移 (Sliding Physics)：分開處理 X 與 Y，達成流暢的「滑牆」效果
+        if dx != 0:
+            new_x = self.x + math.copysign(move_dist_x, dx)
+            if not check_collision(new_x, self.y): self.x = new_x
+        if dy != 0:
+            new_y = self.y + math.copysign(move_dist_y, dy)
+            if not check_collision(self.x, new_y): self.y = new_y
+
+        # 6. 全域邊界限制 (Boundary Clamp)：確保角色不論在任何模式都不會跑出 1280x720 視窗
         self.x = max(self.avatar_size, min(1280 - self.avatar_size, self.x))
         self.y = max(self.avatar_size, min(720 - self.avatar_size, self.y))
 
-        # 根據是否有移動更新狀態與對應的視覺鍵
-        self.state = "WALK" if (dx != 0 or dy != 0) else "IDLE"
-        self.visual_key = f"ghost_{self.color_key}_{self.state.lower()}"
-
-    def move_in_maze(self, dx, dy, dt, tile_size, is_wall_cb):
-        """
-        執行迷宮物理移動，包含走廊吸附與碰撞偵測。
-        :param is_wall_cb: 一個接收 (x, y) 並回傳 bool 的函式，判斷該點是否撞牆。
-        """
-        if dx == 0 and dy == 0:
-            self.current_dx, self.current_dy = 0.0, 0.0
-            return
-
-        move_dist = self.speed * dt
-        # 使用實體自身的半徑進行碰撞偵測
-        radius = self.avatar_size
-        # 吸附容差
-        snap_threshold = tile_size * 0.35
-
-        # 1. 走廊吸附邏輯 (Corridor Snapping)
-        # 計算當前所在格子的中心點
-        grid_col = int(self.x / tile_size)
-        grid_row = int(self.y / tile_size)
-        center_x = grid_col * tile_size + tile_size // 2
-        center_y = grid_row * tile_size + tile_size // 2
-
-        if dx != 0 and dy == 0: # 純水平移動，吸附 Y 軸
-            offset_y = center_y - self.y
-            if abs(offset_y) <= snap_threshold:
-                self.y += math.copysign(min(abs(offset_y), move_dist * 0.8), offset_y)
-        elif dy != 0 and dx == 0: # 純垂直移動，吸附 X 軸
-            offset_x = center_x - self.x
-            if abs(offset_x) <= snap_threshold:
-                self.x += math.copysign(min(abs(offset_x), move_dist * 0.8), offset_x)
-
-        # 2. 嘗試移動並檢查碰撞 (獨立處理 X 與 Y，實現滑牆效果)
-        def check_collision(nx, ny):
-            corners = [(nx-radius, ny-radius), (nx+radius, ny-radius),
-                       (nx-radius, ny+radius), (nx+radius, ny+radius)]
-            return any(is_wall_cb(cx, cy) for cx, cy in corners)
-
-        if dx != 0:
-            new_x = self.x + math.copysign(move_dist, dx)
-            if not check_collision(new_x, self.y):
-                self.x = new_x
-        
-        if dy != 0:
-            new_y = self.y + math.copysign(move_dist, dy)
-            if not check_collision(self.x, new_y):
-                self.y = new_y
-
-        self.current_dx = float(dx)
-        self.current_dy = float(dy)
-        # 更新動畫狀態
         self.state = "WALK"
-        self.visual_key = f"ghost_{self.color_key}_{self.state.lower()}"
+        self.visual_key = f"{self.color_key}_{self.direction}"
 
     def update(self, dt):
         """
         處理物理更新與動畫影格切換。
         """
-        pass
+        # 只有在行走狀態才進行影格切換計時
+        if self.state == "WALK":
+            self.animation_timer += dt
+            if self.animation_timer >= self.animation_speed:
+                self.animation_timer = 0
+                self.frame_index = (self.frame_index + 1) % 2
+        else:
+            # 靜止時固定在第 0 影格（通常是靜止影格）
+            self.frame_index = 0
+       
+
+    def get_sprite_rect(self, surface):
+        """1x2 切割：寬度不變，高度除以 2"""
+        w, h = surface.get_size()
+        frame_h = h // 2
+        return pygame.Rect(0, self.frame_index * frame_h, w, frame_h)
 
 class RemoteGhost(Entity):
     """
@@ -141,22 +160,44 @@ class RemoteGhost(Entity):
     _DR_TIMEOUT = 0.2  # 大廳對抖動容忍度較高，採用稍寬鬆的超時
 
     def __init__(self, player_id, color_key="green"):
-        super().__init__(640, 360, visual_key=f"ghost_{color_key}_idle")
+        self.direction = "right"
+        super().__init__(640, 360, visual_key=f"{color_key}_{self.direction}")
         self.player_id = player_id
         self.color_key = color_key
         self.sync = RemoteSyncState(target_x=640.0, target_y=360.0)
         self.disconnected = False  # 隊友斷線標記，由 Engine 設定
+        self.state = "IDLE"
+        self.frame_index = 0
+        self.animation_timer = 0.0
+        self.animation_speed = 0.15
 
     def apply_server_update(self, x, y, dx, dy):
         """收到伺服器轉發的封包時，更新目標位置與速度方向，並切換動畫狀態。"""
         apply_server_update(self.sync, x, y, dx, dy)
-        state = "walk" if (dx != 0 or dy != 0) else "idle"
-        self.visual_key = f"ghost_{self.color_key}_{state}"
+        self.state = "WALK" if (dx != 0 or dy != 0) else "IDLE"
+        if dx > 0:
+            self.direction = "right"
+        elif dx < 0:
+            self.direction = "left"
+
+        self.visual_key = f"{self.color_key}_{self.direction}"
 
     def update(self, dt):
         """每幀：Dead Reckoning 預測目標 + LERP 平滑逼近渲染位置。"""
         tick_remote_sync(self, self.sync, dt, self.SPEED,
                          bounds=self._BOUNDS, dr_timeout=self._DR_TIMEOUT)
+        
+        # 更新遠端玩家動畫
+        self.animation_timer += dt
+        if self.animation_timer >= self.animation_speed:
+            self.animation_timer = 0
+            self.frame_index = (self.frame_index + 1) % 2
+
+
+    def get_sprite_rect(self, surface):
+        w, h = surface.get_size()
+        frame_h = h // 2
+        return pygame.Rect(0, self.frame_index * frame_h, w, frame_h)
 
 
 class StaticObject(Entity):

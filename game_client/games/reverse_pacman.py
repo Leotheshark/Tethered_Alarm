@@ -448,7 +448,7 @@ class ReversePacman(BaseLogicInterface):
         # 1. 更新本地玩家移動
         if local and local.alive and not local.permanently_down:
             # 使用封裝在實體中的移動邏輯
-            local.move_in_maze(
+            local.move(
                 self._input_dx, self._input_dy, dt, 
                 TILE_SIZE, 
                 lambda px, py: is_wall(self.tile_map, *pixel_to_tile(px, py))
@@ -458,6 +458,7 @@ class ReversePacman(BaseLogicInterface):
 
         # 2. 更新所有玩家的計時器（debuff、spike）
         for p in self.players.values():
+            p.update(dt) # 驅動動畫影格
             if p.debuff_timer > 0:
                 p.debuff_timer = max(0.0, p.debuff_timer - dt)
             if p.spike_timer > 0:
@@ -603,6 +604,8 @@ class ReversePacman(BaseLogicInterface):
                     "dx":             p.current_dx,
                     "dy":             p.current_dy,
                     "avatar_size":    p.avatar_size,
+                    "visual_key":     p.visual_key,
+                    "frame_index":    p.frame_index,
                 }
                 for color, p in self.players.items()
             },
@@ -650,6 +653,13 @@ class ReversePacman(BaseLogicInterface):
                 if raw_dx != 0 and raw_dy != 0:
                     raw_dx *= 0.7071
                     raw_dy *= 0.7071
+                
+                # 更新遠端玩家視覺朝向
+                p.state = "WALK" if (raw_dx != 0 or raw_dy != 0) else "IDLE"
+                if raw_dx > 0: p.direction = "right"
+                elif raw_dx < 0: p.direction = "left"
+                p.visual_key = f"{p.color_key}_{p.direction}"
+
                 apply_server_update(p.sync,
                                     data.get("x", p.sync.target_x),
                                     data.get("y", p.sync.target_y),

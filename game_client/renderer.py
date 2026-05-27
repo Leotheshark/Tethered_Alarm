@@ -120,10 +120,10 @@ class Renderer:
             cam_x = (map_w - sw) / 2
         else:
             cam_x = max(0, min(cam_x, map_w - sw))
-        if map_h <= sh:
-            cam_y = (map_h - sh) / 2
-        else:
-            cam_y = max(0, min(cam_y, map_h - sh))
+
+        # 修正垂直對齊：若地圖高度小於視窗，將相機 y 設為 0 以便讓地圖貼頂，留白集中在下方
+        cam_y = 0 if map_h <= sh else max(0, min(cam_y, map_h - sh))
+
         ox, oy = int(cam_x), int(cam_y)
 
         # 1. 繪製地圖磚片（只畫視窗範圍內的，省渲染）
@@ -180,11 +180,23 @@ class Renderer:
                         -math.pi / 2, end_angle, 4
                     )
             else:
-                # 正常：填色圓形
-                pygame.draw.circle(self.screen, rgb, (px, py), radius)
-                # 速度減益提示：外圈閃紫色
+                # 正常狀態：優先嘗試繪製精靈圖 (1x2 影格)
+                vkey = pdata.get("visual_key")
+                surface = VisualRegistry.get_surface(vkey) if vkey else None
+                if surface:
+                    frame_idx = pdata.get("frame_index", 0)
+                    w, h = surface.get_size()
+                    # 依照 entities.py 規範，角色精靈圖採 1 欄 2 列垂直排列
+                    frame_h = h // 2
+                    area = pygame.Rect(0, frame_idx * frame_h, w, frame_h)
+                    self.screen.blit(surface, (px - w // 2, py - frame_h // 2), area)
+                else:
+                    # 資源未載入時的備援：繪製填色圓形
+                    pygame.draw.circle(self.screen, rgb, (px, py), radius)
+
+                # 狀態疊加：不論是圓形或精靈圖，都疊加緩速環
                 if pdata.get("debuff") or pdata.get("spike"):
-                    pygame.draw.circle(self.screen, (200, 100, 255), (px, py), radius, 2)
+                    pygame.draw.circle(self.screen, (200, 100, 255), (px, py), radius + 2, 2)
 
             # 玩家顏色標籤（顯示在角色下方）
             label = self.font.render(color[:1].upper(), True, rgb)

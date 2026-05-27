@@ -10,6 +10,7 @@ from input_handler import InputHandler
 from states import StateMachine
 from renderer import Renderer
 from entities import Ghost, RemoteGhost
+from visual_registry import VisualRegistry
 from entity_manager import EntityManager
 from sound_manager import SoundManager
 from network import GameNetwork
@@ -66,7 +67,7 @@ class GameEngine:
 
         self.renderer = None  # 視窗建立後才初始化渲染器
         self.game_window_shown = False
-
+        
         # Socket.IO 回呼在背景執行緒觸發，用旗標讓主迴圈在主執行緒安全執行 Pygame 操作
         self._pending_show_window = False
         self._pending_stop_alarm = False
@@ -96,12 +97,13 @@ class GameEngine:
             print("[Engine] DEBUG_MODE: 跳過大廳，直接開啟遊戲視窗")
             self._pending_show_window = True
 
-        # DEBUG_MINIGAME=1：跳過 server 廣播，等湊滿 DEBUG_PLAYERS 人後本地直接啟動 reverse_pacman
+        # DEBUG_MINIGAME=1：跳過 server 廣播，等湊滿人數後啟動指定的小遊戲
         self._debug_minigame_pending = os.environ.get('DEBUG_MINIGAME') == '1'
+        self._debug_minigame_name = os.environ.get('DEBUG_MINIGAME_NAME', 'dodge_knives')
         self._debug_required_players = int(os.environ.get('DEBUG_PLAYERS', '1'))
         self._debug_wait_log_timer = 0.0
         if self._debug_minigame_pending:
-            print(f"[Engine] DEBUG_MINIGAME: 等湊滿 {self._debug_required_players} 人後啟動 reverse_pacman")
+            print(f"[Engine] DEBUG_MINIGAME: 等湊滿 {self._debug_required_players} 人後啟動 {self._debug_minigame_name}")
 
         # 2.7. 建立網路客戶端，連接到伺服器並監聽 alarm/game 事件
         # room id 可由環境變數 ROOM_ID 覆蓋，否則使用預設 "default"
@@ -115,7 +117,7 @@ class GameEngine:
     def on_color_assigned(self, color):
         """伺服器指派顏色後，更新本地玩家角色的顏色。"""
         self.player.color_key = color
-        self.player.visual_key = f"ghost_{color}_idle"
+        self.player.visual_key = f"{color}_{self.player.direction}"
         print(f"[Engine] player color assigned: {color}")
 
     def on_player_moved(self, data):
@@ -179,6 +181,13 @@ class GameEngine:
         self.renderer = Renderer(self.screen)
         self.game_window_shown = True
 
+        # 批次載入玩家精靈圖 (現在視窗已開啟，可以安全地執行 convert_alpha)
+        _colors = ["blue", "red", "pink", "green"]
+        _states = ["left", "right"]
+        for c in _colors:
+            for s in _states:
+                VisualRegistry.load_image(f"{c}_{s}", f"{c}_{s}.png")
+
     def _build_ordered_player_id_list(self):
         """所有 client 對 player_id_list 達成共識：按 server 指派的顏色順序排序，
         缺顏色的（還沒收到 game_room_subscribed）排在最後並依 sid 排序。"""
@@ -205,8 +214,8 @@ class GameEngine:
         if self._debug_minigame_pending and self.game_window_shown:
             present = len(self.remote_ghosts) + 1
             if present >= self._debug_required_players:
-                print(f"[Engine] DEBUG_MINIGAME: 人數已達 {present}/{self._debug_required_players}，啟動 reverse_pacman")
-                self._pending_minigame = "reverse_pacman"
+                print(f"[Engine] DEBUG_MINIGAME: 人數已達 {present}/{self._debug_required_players}，啟動 {self._debug_minigame_name}")
+                self._pending_minigame = self._debug_minigame_name
                 self._debug_minigame_pending = False
             else:
                 self._debug_wait_log_timer += 1
@@ -349,14 +358,22 @@ class GameEngine:
                 self.player.move(dx, dy, dt)
                 self.entity_manager.update_all(dt)
 
-                # 每 50ms 廣播一次本地玩家位置
-                self._sync_timer += dt
-                if self._sync_timer >= self._SYNC_INTERVAL:
-                    self._sync_timer = 0.0
-                    self.network.send_position(
-                        self.player.x, self.player.y,
-                        self.player.current_dx, self.player.current_dy,
-                    )
+            # 定期廣播基礎位置 (Presence Heartbeat)
+            # 即使在小遊戲中也要發送，讓後進的 Debug Client 能看見所有人並啟動遊戲
+            self._sync_timer += dt
+            if self._sync_timer >= self._SYNC_INTERVAL:
+                self._sync_timer = 0.0
+                # 優先使用小遊戲中的實際座標，否則使用大廳座標
+                send_x, send_y = self.player.x, self.player.y
+                send_dx, send_dy = self.player.current_dx, self.player.current_dy
+
+                if self.active_game:
+                    # 若在小遊戲中，同步小遊戲內的實際座標與當前輸入
+                    send_dx, send_dy = float(dx), float(dy)
+                    lp = self.active_game.players.get(self.active_game.local_color)
+                    if lp: send_x, send_y = lp.x, lp.y
+                
+                self.network.send_position(send_x, send_y, send_dx, send_dy)
 
             # C. 處理渲染
             self.renderer.clear()

@@ -53,7 +53,7 @@ def main():
         env = os.environ.copy()
         env["DEBUG_MODE"] = "1"
         env["DEBUG_MINIGAME"] = "1"
-        env["DEBUG_MINIGAME_NAME"] = "reverse_pacman"
+        env["DEBUG_MINIGAME_NAME"] = "dodge_knives"
         env["DEBUG_WINDOWED"] = "1"
         env["DEBUG_WINDOW_POS"] = f"{positions[i][0]},{positions[i][1]}"
         env["DEBUG_TITLE"] = f"Player {i + 1}"
