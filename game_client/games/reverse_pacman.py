@@ -447,11 +447,14 @@ class ReversePacman(BaseLogicInterface):
 
         # 1. 更新本地玩家移動
         if local and local.alive and not local.permanently_down:
+            # 收集其他玩家的碰撞矩形（包含倒地者）
+            other_rects = [p.rect for c, p in self.players.items() if c != self.local_color]
             # 使用封裝在實體中的移動邏輯
             local.move(
                 self._input_dx, self._input_dy, dt, 
                 TILE_SIZE, 
-                lambda px, py: is_wall(self.tile_map, *pixel_to_tile(px, py))
+                lambda px, py: is_wall(self.tile_map, *pixel_to_tile(px, py)),
+                others=other_rects
             )
             # 移動後處理地圖互動
             self._handle_tile_interaction(local)
