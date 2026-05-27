@@ -310,13 +310,14 @@ class GameEngine:
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_s and self._show_surrender_ui:
                         self.network.send_surrender()
-                    # E 鍵：開始救援隊友（小遊戲進行中時有效）
-                    elif event.key == pygame.K_e and self.active_game:
-                        self.active_game.handle_event({"type": "rescue_start"})
-                elif event.type == pygame.KEYUP:
-                    # 放開 E 鍵：取消救援
-                    if event.key == pygame.K_e and self.active_game:
-                        self.active_game.handle_event({"type": "rescue_stop"})
+
+            # E 鍵改用 GetAsyncKeyState 邊緣偵測，與 WASD 一致，避免多視窗 / IME 攔截造成 KEYDOWN 漏接
+            rescue_edge = self.input_handler.poll_rescue_edge()
+            if rescue_edge and self.active_game:
+                if rescue_edge == "press":
+                    self.active_game.handle_event({"type": "rescue_start"})
+                elif rescue_edge == "release":
+                    self.active_game.handle_event({"type": "rescue_stop"})
 
             dx, dy = self.input_handler.get_movement_input()
 

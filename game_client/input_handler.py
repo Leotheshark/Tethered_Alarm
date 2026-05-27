@@ -9,6 +9,7 @@ VK_W = 0x57
 VK_A = 0x41
 VK_S = 0x53
 VK_D = 0x44
+VK_E = 0x45
 
 def is_key_pressed(vk_code):
     """
@@ -35,6 +36,10 @@ def _is_my_window_foreground():
 
 
 class InputHandler:
+    def __init__(self):
+        # 救援鍵的上一幀狀態，用來偵測「剛按下 / 剛放開」邊緣觸發
+        self._prev_rescue_pressed = False
+
     def handle_events(self):
         """監聽系統事件 (如關閉視窗)"""
         for event in pygame.event.get():
@@ -57,3 +62,31 @@ class InputHandler:
         if is_key_pressed(VK_D): dx += 1
 
         return dx, dy
+
+    def poll_rescue_edge(self):
+        """
+        每幀偵測 E 鍵狀態，回傳邊緣事件：
+        - "press"：本幀剛按下（上幀沒按、這幀有按）
+        - "release"：本幀剛放開（上幀有按、這幀沒按）
+        - None：狀態無變化
+
+        改用 GetAsyncKeyState 而非 pygame KEYDOWN 事件，
+        確保多視窗 (DEBUG_WINDOWED) 與 IME 攔截情境下都能可靠取得 E 鍵輸入，
+        與 WASD 的偵測機制保持一致。
+        """
+        # DEBUG 多視窗模式：焦點不在自己視窗時忽略 E 鍵，避免一按全機都救援
+        if _REQUIRE_FOREGROUND and not _is_my_window_foreground():
+            # 若上一幀仍記錄為按下，視為放開以避免卡住救援狀態
+            if self._prev_rescue_pressed:
+                self._prev_rescue_pressed = False
+                return "release"
+            return None
+
+        pressed = bool(is_key_pressed(VK_E))
+        event = None
+        if pressed and not self._prev_rescue_pressed:
+            event = "press"
+        elif not pressed and self._prev_rescue_pressed:
+            event = "release"
+        self._prev_rescue_pressed = pressed
+        return event

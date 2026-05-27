@@ -11,7 +11,9 @@ Reverse Pac-Man 小遊戲邏輯模組。
 其他客戶端接收廣播後純粹更新渲染位置，不自行計算 AI。
 """
 
+import json
 import math
+import os
 import time
 from collections import deque
 
@@ -94,6 +96,69 @@ BUTTON_GATE_MAP = {
 }
 
 
+# ─── 關卡 JSON 載入器 ─────────────────────────────────────────────────────────
+# JSON 字串 → tile 整數常數的對照（與檔頭的 W/E/P/G/B/S 一致）
+_CHAR_TO_TILE = {'W': W, '.': E, 'P': P, 'G': G, 'B': B, 'S': S}
+
+# 預設關卡檔路徑：repo_root/maps/<name>.json，找不到時 fallback 至上方寫死的常數
+_MAPS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "maps"))
+
+
+def load_map(map_name: str = "level_default") -> bool:
+    """
+    從 maps/<map_name>.json 載入關卡，覆寫模組級的 MAP_LAYOUT / SPAWN_TILES /
+    PACMAN_SPAWN_TILE / BUTTON_GATE_MAP / ROWS / COLS / TILE_SIZE。
+
+    回傳 True 表示成功；False 表示檔案不存在或格式錯誤，呼叫端可選擇沿用內建關卡。
+    本函式有副作用（修改模組級常數），但同一 client 同時間只跑一個 ReversePacman 實例，
+    所以不會產生競態。多關卡需求出現時再重構為實例屬性。
+    """
+    global MAP_LAYOUT, ROWS, COLS, TILE_SIZE, SPAWN_TILES, PACMAN_SPAWN_TILE, BUTTON_GATE_MAP
+
+    path = os.path.join(_MAPS_DIR, f"{map_name}.json")
+    if not os.path.isfile(path):
+        print(f"[ReversePacman] map file not found: {path}, using built-in constants")
+        return False
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        tiles_str = data["tiles"]
+        new_layout = [[_CHAR_TO_TILE[ch] for ch in row] for row in tiles_str]
+
+        spawns = data["spawns"]
+        new_spawn_tiles = {
+            color: tuple(spawns[color]) for color in ("blue", "green", "pink", "red")
+        }
+        new_pacman_spawn = tuple(spawns["pacman"])
+
+        new_button_gate = {
+            tuple(entry["button"]): tuple(entry["gate"])
+            for entry in data["button_gate_map"]
+        }
+
+        # 全部解析成功才覆寫，避免半套狀態
+        MAP_LAYOUT       = new_layout
+        ROWS             = data.get("rows", len(new_layout))
+        COLS             = data.get("cols", len(new_layout[0]) if new_layout else 0)
+        TILE_SIZE        = data.get("tile_size", TILE_SIZE)
+        SPAWN_TILES      = new_spawn_tiles
+        PACMAN_SPAWN_TILE = new_pacman_spawn
+        BUTTON_GATE_MAP  = new_button_gate
+
+        print(f"[ReversePacman] loaded map: {map_name} ({ROWS}x{COLS}, "
+              f"{sum(row.count(P) for row in new_layout)} pellets)")
+        return True
+    except (KeyError, ValueError, json.JSONDecodeError) as e:
+        print(f"[ReversePacman] failed to parse map {path}: {e}, using built-in constants")
+        return False
+
+
+# 模組載入時自動套用 maps/level_default.json，若檔案缺失或格式錯誤則沿用上方常數
+load_map("level_default")
+
+
 def tile_center(row, col):
     """回傳指定格子中心點的像素座標 (x, y)。"""
     x = col * TILE_SIZE + TILE_SIZE // 2
@@ -154,6 +219,9 @@ class PlayerState(Ghost):
         self.debuff_timer = 0.0     # 被救援後的速度減半倒數
         self.spike_timer = 0.0      # 踩到釘板後的緩速倒數
         self.rescue_progress = 0.0  # 隊友救援進度
+        # 是否正在被某人救援；所有 client 收到 rescue_progress_start 後設為 True，
+        # 進入 update 後本地以 dt 累加 rescue_progress，讓畫面上的進度弧線在每台都會動。
+        self.being_rescued = False
 
         super().__init__(color_key=color, avatar_size=AVATAR_SIZE)
         self.speed = PLAYER_SPEED # 更新為小遊戲專用的速度數值
@@ -288,6 +356,7 @@ class ReversePacman(BaseLogicInterface):
                 p.debuff_timer = 0.0
                 p.spike_timer = 0.0
                 p.rescue_progress = 0.0
+                p.being_rescued = False
 
         # 重置 Pac-Man
         sr, sc = PACMAN_SPAWN_TILE
@@ -339,12 +408,34 @@ class ReversePacman(BaseLogicInterface):
             }
             print(f"[ReversePacman] rescue_start by {self.local_color} at {local_pos} -> target={self._rescuing_target}")
             print(f"[ReversePacman]   all players: {states}")
+
+            # 廣播救援開始，讓其他 client 在本機累加進度條（畫面同步）
+            if self._rescuing_target:
+                target = self.players.get(self._rescuing_target)
+                if target:
+                    target.being_rescued = True
+                    target.rescue_progress = 0.0
+                try:
+                    self.socket_client.send_game_event({
+                        "type": "rescue_progress_start",
+                        "color": self._rescuing_target,
+                    })
+                except Exception:
+                    pass
         elif etype == "rescue_stop":
-            # 玩家放開 E：取消救援進度
+            # 玩家放開 E：取消救援進度，並廣播給其他 client 一起清掉本機進度條
             if self._rescuing_target:
                 target = self.players.get(self._rescuing_target)
                 if target:
                     target.rescue_progress = 0.0
+                    target.being_rescued = False
+                try:
+                    self.socket_client.send_game_event({
+                        "type": "rescue_progress_stop",
+                        "color": self._rescuing_target,
+                    })
+                except Exception:
+                    pass
             self._rescuing_target = None
 
     def update(self, dt: float):
@@ -387,6 +478,7 @@ class ReversePacman(BaseLogicInterface):
                              bounds=map_bounds)
 
         # 3. 處理救援進度
+        # 3a. 本機是救援者：每幀累加目標的 rescue_progress，並在完成 / 中斷時廣播
         if self._rescuing_target:
             target = self.players.get(self._rescuing_target)
             in_range = False
@@ -410,10 +502,12 @@ class ReversePacman(BaseLogicInterface):
                     target.rescue_count += 1
                     target.debuff_timer = DEBUFF_DURATION  # 被救後速度減半
                     target.rescue_progress = 0.0
+                    target.being_rescued = False
                     rescued_color = self._rescuing_target
                     self._rescuing_target = None
                     print(f"[ReversePacman] {target.color_key} rescued (count={target.rescue_count})")
                     # 廣播給其他 client（含被救者本人、Pac-Man authority）
+                    # 其他 client 收到 player_rescued 時會一併清掉 being_rescued
                     try:
                         self.socket_client.send_game_event({
                             "type": "player_rescued",
@@ -423,10 +517,32 @@ class ReversePacman(BaseLogicInterface):
                     except Exception:
                         pass
             else:
-                # 目標已復活、消失，或本地玩家走出救援範圍：中斷救援
+                # 目標已復活、消失，或本地玩家走出救援範圍：中斷救援並通知其他 client
+                interrupted_color = self._rescuing_target
                 if target:
                     target.rescue_progress = 0.0
+                    target.being_rescued = False
                 self._rescuing_target = None
+                try:
+                    self.socket_client.send_game_event({
+                        "type": "rescue_progress_stop",
+                        "color": interrupted_color,
+                    })
+                except Exception:
+                    pass
+
+        # 3b. 其他 client（旁觀者、被救者）：對 being_rescued=True 的玩家本機累加進度條，
+        # 確保畫面上的進度弧線在每台都會動。救援完成 / 中斷時由事件清掉旗標。
+        for color, p in self.players.items():
+            if color == self._rescuing_target:
+                continue  # 本機是救援者，已在 3a 處理
+            if p.being_rescued and not p.alive and not p.permanently_down:
+                p.rescue_progress = min(p.rescue_progress + dt, RESCUE_HOLD_TIME)
+
+        # 3.5. 壓力板閘門：authority 每幀重新評估，狀態變化才廣播
+        # 放在 Pac-Man AI 之前，確保 AI 用最新的閘門牆壁狀態做 BFS
+        if self.is_pacman_authority:
+            self._evaluate_gates()
 
         # 4. Pac-Man AI（僅授權客戶端執行）
         if self.is_pacman_authority:
@@ -551,13 +667,26 @@ class ReversePacman(BaseLogicInterface):
                                 data.get("y", self.pacman.sync.target_y),
                                 data.get("dx", 0.0), data.get("dy", 0.0))
 
-        elif dtype == "gate_open":
-            rc = data.get("gate")  # [row, col]
-            if rc:
-                self.open_gates.add(tuple(rc))
-                gr, gc = rc
+        elif dtype == "gate_state":
+            # 由 authority 廣播完整當前開啟集合：非 authority 直接套用，
+            # 不自行判斷壓力板狀態，避免邏輯分歧。
+            new_open = {tuple(g) for g in data.get("open_gates", [])}
+            newly_closed = self.open_gates - new_open
+            newly_open = new_open - self.open_gates
+
+            for gr, gc in newly_open:
                 if 0 <= gr < ROWS and 0 <= gc < COLS:
-                    self.tile_map[gr][gc] = E  # 閘門開啟後視為空地
+                    self.tile_map[gr][gc] = E
+
+            for gr, gc in newly_closed:
+                if 0 <= gr < ROWS and 0 <= gc < COLS:
+                    self.tile_map[gr][gc] = G
+                    # 閘門剛關上：本機是否有玩家站在門上需要推離
+                    # （包含本機玩家自己，因為他的本機位置由 move_in_maze 控制，
+                    # authority 推不到他，要靠本機收到事件後自己跳開）
+                    self._push_players_off_gate(gr, gc)
+
+            self.open_gates = new_open
 
         elif dtype == "pellet_eaten":
             rc = data.get("tile")  # [row, col]
@@ -576,6 +705,7 @@ class ReversePacman(BaseLogicInterface):
             if p and p.alive:
                 p.alive = False
                 p.rescue_progress = 0.0
+                p.being_rescued = False  # 被抓時若剛好正在被救，清掉進度條旗標
 
         elif dtype == "player_rescued":
             # 由執行救援的 client 廣播：標記玩家為復活，套用 debuff 與救援次數
@@ -587,6 +717,23 @@ class ReversePacman(BaseLogicInterface):
                 p.rescue_count = data.get("rescue_count", p.rescue_count + 1)
                 p.debuff_timer = DEBUFF_DURATION
                 p.rescue_progress = 0.0
+                p.being_rescued = False  # 救援完成，清掉本機累加進度的旗標
+
+        elif dtype == "rescue_progress_start":
+            # 由救援者廣播：在本機標記目標為「正在被救援」，update 會自動累加進度條
+            color = data.get("color")
+            p = self.players.get(color)
+            if p:
+                p.being_rescued = True
+                p.rescue_progress = 0.0
+
+        elif dtype == "rescue_progress_stop":
+            # 由救援者廣播：放開 E 或走出範圍，本機清掉進度條
+            color = data.get("color")
+            p = self.players.get(color)
+            if p:
+                p.being_rescued = False
+                p.rescue_progress = 0.0
 
     # ─────────────────────────────────────────────────────────────────────
     # 內部輔助方法
@@ -595,9 +742,9 @@ class ReversePacman(BaseLogicInterface):
     def _handle_tile_interaction(self, player: PlayerState):
         """
         玩家中心格發生的互動：
-        - P (pellet)  → 吃掉，廣播 pellet_eaten
-        - B (button)  → 開啟對應閘門，廣播 gate_open
-        - S (spike)   → 觸發緩速
+        - P (pellet) → 吃掉，廣播 pellet_eaten
+        - S (spike)  → 觸發緩速
+        按鈕 (B) 是壓力板，由 authority 在 _evaluate_gates 每幀處理，這裡不再特別偵測。
         """
         row, col = pixel_to_tile(player.x, player.y)
         if row < 0 or row >= ROWS or col < 0 or col >= COLS:
@@ -616,22 +763,6 @@ class ReversePacman(BaseLogicInterface):
                 })
             except Exception:
                 pass
-
-        elif tile == B:
-            # 踩到按鈕：查表找對應閘門並開啟
-            gate_rc = BUTTON_GATE_MAP.get((row, col))
-            if gate_rc and gate_rc not in self.open_gates:
-                gr, gc = gate_rc
-                self.open_gates.add(gate_rc)
-                if 0 <= gr < ROWS and 0 <= gc < COLS:
-                    self.tile_map[gr][gc] = E  # 本地地圖開閘
-                try:
-                    self.socket_client.send_game_event({
-                        "type": "gate_open",
-                        "gate": list(gate_rc),
-                    })
-                except Exception:
-                    pass
 
         elif tile == S:
             # 踩到釘板：觸發緩速計時器
@@ -710,6 +841,81 @@ class ReversePacman(BaseLogicInterface):
                 continue
             if math.hypot(pm.x - p.x, pm.y - p.y) < CATCH_RADIUS:
                 self._catch_player(p)
+
+    def _evaluate_gates(self):
+        """
+        壓力板邏輯（僅 authority 執行）：每幀檢查哪些 button 正被存活玩家踩著，
+        進而決定哪些 gate 該開、哪些該關。狀態與上一幀有差異時：
+        1. 更新本機 tile_map 與 open_gates
+        2. 對「閘門剛關上但有玩家站在門上」的情況把玩家推到相鄰空地
+        3. 廣播 gate_state 給其他 client（旁觀端不自己算，避免不一致）
+        """
+        # 1. 算出當下被踩的 button 座標集合（只看存活玩家、不看 Pac-Man）
+        pressed_buttons = set()
+        for p in self.players.values():
+            if not p.alive:
+                continue
+            r, c = pixel_to_tile(p.x, p.y)
+            if 0 <= r < ROWS and 0 <= c < COLS and (r, c) in BUTTON_GATE_MAP:
+                pressed_buttons.add((r, c))
+
+        # 2. 算出當下應該開啟的 gate 座標集合
+        should_open = {BUTTON_GATE_MAP[btn] for btn in pressed_buttons}
+
+        # 3. 找出狀態變化：新開的閘門與新關的閘門
+        newly_open = should_open - self.open_gates
+        newly_closed = self.open_gates - should_open
+
+        if not newly_open and not newly_closed:
+            return  # 無變化，省下廣播
+
+        # 4. 套用本機變化
+        for gr, gc in newly_open:
+            if 0 <= gr < ROWS and 0 <= gc < COLS:
+                self.tile_map[gr][gc] = E  # 開啟時視為空地
+        for gr, gc in newly_closed:
+            if 0 <= gr < ROWS and 0 <= gc < COLS:
+                self.tile_map[gr][gc] = G  # 關上時恢復閘門
+                # 把站在這格閘門上的玩家推到相鄰空地
+                self._push_players_off_gate(gr, gc)
+
+        self.open_gates = set(should_open)
+
+        # 5. 廣播給其他 client，附帶完整當前開啟集合（power-on resync 也能正確）
+        try:
+            self.socket_client.send_game_event({
+                "type": "gate_state",
+                "open_gates": [list(g) for g in self.open_gates],
+            })
+        except Exception:
+            pass
+
+    def _push_players_off_gate(self, gr, gc):
+        """
+        閘門 (gr, gc) 剛關上，把站在這格上的玩家瞬移到相鄰空地，
+        避免被卡在牆裡。優先嘗試上下左右四方向。
+        """
+        # 嘗試順序：上、下、左、右
+        neighbors = [(gr - 1, gc), (gr + 1, gc), (gr, gc - 1), (gr, gc + 1)]
+        for p in self.players.values():
+            if not p.alive:
+                continue
+            pr, pc = pixel_to_tile(p.x, p.y)
+            if (pr, pc) != (gr, gc):
+                continue  # 不在這扇門上
+            # 找第一個可通行的相鄰格
+            for nr, nc in neighbors:
+                if 0 <= nr < ROWS and 0 <= nc < COLS and not is_wall(self.tile_map, nr, nc):
+                    nx = nc * TILE_SIZE + TILE_SIZE // 2
+                    ny = nr * TILE_SIZE + TILE_SIZE // 2
+                    p.x, p.y = float(nx), float(ny)
+                    print(f"[ReversePacman] pushed {p.color_key} off closing gate ({gr},{gc}) -> ({nr},{nc})")
+                    break
+            else:
+                # 四周都是牆，極端情況：留在原地（按理不會發生）
+                print(f"[ReversePacman] gate ({gr},{gc}) closed but no empty neighbor for {p.color_key}")
+            # 推離後重設遠端同步目標，避免 LERP 又把他拖回門裡
+            reset_sync_state(p.sync, p.x, p.y)
 
     def _catch_player(self, player: PlayerState):
         """

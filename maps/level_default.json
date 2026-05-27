@@ -1,0 +1,39 @@
+{
+  "name": "level_default",
+  "tile_size": 40,
+  "rows": 18,
+  "cols": 32,
+  "tiles": [
+    "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+    "WPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPW",
+    "WPWWPWWWPWWWWWWWPWWWWWPWWWPWWWWW",
+    "WPWWBWWWPWWWWWWWPWWWWWPPPGBWWWWW",
+    "WPWWPWWWPWWWWWWWPWWWWWPWWWPWWWWW",
+    "WPPPPPPGPPPPPPPPPPPPPPPPPPPPPPPW",
+    "WPWWPWPWWWPWWWWWWWWWPWWWPWPWWWPW",
+    "WPWWPWPWWWPWWWWWWWWWPWWWPWPWWWPW",
+    "WPPPPWPPPPPPPPPPPPPPPPPPPPPWPPPW",
+    "WWWWPWPWWWWWPWWPWWPWWWWWPWPWWWWW",
+    "WPPPPPPPPPPPPWWPWWPPPPPPPPPPPPPW",
+    "WWWWPWPWWWWWPWWPWWPWWWWWPWPWWWWW",
+    "WWWWPWGWWWWWPWWPWWPWWWWWPWPWWWWW",
+    "WPPPPWPPPPPPPPPPPPPPPPPPPPPWPPPW",
+    "WPWWBWWWPWWWWWWWWWWWPWPWWWBWWWPW",
+    "WPWWPWWWPWWWWWWWWWWWPWPWWWPWWWPW",
+    "WPPPPPPPPPPPPPPPPPPPPPPPPPPGPPPW",
+    "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW"
+  ],
+  "spawns": {
+    "blue":   [1, 1],
+    "green":  [15, 30],
+    "pink":   [1, 30],
+    "red":    [15, 1],
+    "pacman": [8, 16]
+  },
+  "button_gate_map": [
+    {"button": [3, 4],   "gate": [16, 27], "label": "A: 左上 → 右下"},
+    {"button": [14, 4],  "gate": [3, 25],  "label": "B: 左下 → 右上"},
+    {"button": [3, 26],  "gate": [12, 6],  "label": "C: 右上 → 左下"},
+    {"button": [14, 26], "gate": [5, 7],   "label": "D: 右下 → 左上"}
+  ]
+}
