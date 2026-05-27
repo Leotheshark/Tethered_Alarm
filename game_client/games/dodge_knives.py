@@ -169,8 +169,11 @@ class DodgeKnives(BaseLogicInterface):
 
         local = self.players.get(self.local_color)
         if local and local.alive:
+            # 收集其他玩家的碰撞矩形（包含倒地者），使其成為物理障礙
+            other_rects = [p.rect for c, p in self.players.items() if c != self.local_color]
             local.move(self._input_dx, self._input_dy, dt, TILE_SIZE, 
-                               lambda px, py: is_wall(self.tile_map, *pixel_to_tile(px, py)))
+                               is_wall_cb=lambda px, py: is_wall(self.tile_map, *pixel_to_tile(px, py)),
+                               others=other_rects)
             self._handle_tile_interaction(local)
 
         for p in self.players.values():

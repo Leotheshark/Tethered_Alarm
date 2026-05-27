@@ -20,6 +20,13 @@ class Entity:
         self.y = y
         self.visual_key = visual_key # 對應 VisualRegistry 中的標籤
         self.active = True           # 物件是否還存在於世界上
+        self.width = 32              # 預設碰撞寬度
+        self.height = 32             # 預設碰撞高度
+
+    @property
+    def rect(self):
+        """取得實體的 AABB 碰撞矩形 (以 x, y 為中心)"""
+        return pygame.Rect(self.x - self.width // 2, self.y - self.height // 2, self.width, self.height)
 
     def update(self, dt):
         """
@@ -43,6 +50,8 @@ class Ghost(Entity):
         
         self.color_key = color_key  # 保存顏色鍵以供 visual_key 更新與 fallback 繪製使用
         self.avatar_size = avatar_size # 統一使用實體的半徑屬性
+        self.width = avatar_size * 2 + 4 # 同步碰撞箱寬度為直徑
+        self.height = avatar_size * 2 + 4  # 同步碰撞箱高度為直徑
         self.speed = PLAYER_SPEED
         self.state = "IDLE" # 基礎狀態機：IDLE, WALK, DEAD
         self.current_dx = 0  # 上一幀的原始輸入方向，供網路廣播使用
@@ -53,11 +62,12 @@ class Ghost(Entity):
         self.animation_timer = 0.0
         self.animation_speed = 0.15  # 每 0.15 秒切換一次影格
 
-    def move(self, dx, dy, dt, tile_size=32, is_wall_cb=None):
+    def move(self, dx, dy, dt, tile_size=32, is_wall_cb=None, others=None):
         """
         執行物理移動。統一整合斜向位移正規化、滑牆碰撞偵測與全域邊界限制。
         此演算法同時適用於迷宮（需傳入碰撞回呼）與大廳（使用預設值）。
         :param is_wall_cb: 一個接收 (x, y) 並回傳 bool 的函式，判斷該點是否撞牆。
+        :param others: 一個包含其他實體 pygame.Rect 的清單，用於處理角色間碰撞。
         """
         self.current_dx, self.current_dy = float(dx), float(dy)
 
@@ -89,12 +99,23 @@ class Ghost(Entity):
 
         # 3. 定義內部碰撞檢查：檢查角色矩形四角，若無 callback 則視為不撞牆 (大廳模式)
         def check_collision(nx, ny):
-            if not is_wall_cb:
-                return False
-            # 檢查角色 bounding box 的四個角落是否進入牆面
-            corners = [(nx-radius, ny-radius), (nx+radius, ny-radius),
-                        (nx-radius, ny+radius), (nx+radius, ny+radius)]
-            return any(is_wall_cb(cx, cy) for cx, cy in corners)
+            # A. 牆壁碰撞偵測
+            if is_wall_cb:
+                # 檢查角色 bounding box 的四個角落是否進入牆面
+                corners = [(nx - radius, ny - radius), (nx + radius - 1, ny - radius),
+                           (nx - radius, ny + radius - 1), (nx + radius - 1, ny + radius - 1)]
+                if any(is_wall_cb(cx, cy) for cx, cy in corners):
+                    return True
+            
+            # B. 實體間碰撞偵測 (AABB)
+            if others:
+                # 建立虛擬的新位置矩形，檢查是否與其他實體重疊
+                new_rect = pygame.Rect(nx - radius, ny - radius, radius * 2, radius * 2)
+                for other_rect in others:
+                    if new_rect.colliderect(other_rect):
+                        return True
+            
+            return False
 
         # 4. 走廊吸附 (Corridor Snapping)
         # 只有在「即將撞牆」的情況下才執行吸附，這能確保在空地不會有磁吸感。
@@ -162,6 +183,10 @@ class RemoteGhost(Entity):
     def __init__(self, player_id, color_key="green"):
         self.direction = "right"
         super().__init__(640, 360, visual_key=f"{color_key}_{self.direction}")
+        
+        self.avatar_size = self.AVATAR_SIZE  # 與 Ghost 保持一致的尺寸屬性名稱
+        self.width = self.avatar_size * 2    # 同步遠端玩家的碰撞箱寬度
+        self.height = self.avatar_size * 2   # 同步遠端玩家的碰撞箱高度
         self.player_id = player_id
         self.color_key = color_key
         self.sync = RemoteSyncState(target_x=640.0, target_y=360.0)
