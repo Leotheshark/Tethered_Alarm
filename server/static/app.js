@@ -334,7 +334,14 @@ const uiCallbacks = {
         }
     },
     onGameStarted: () => {
+        document.getElementById('countdown-overlay').style.display = 'none';
         console.log('伺服器確認：遊戲正式開始！');
+        // 透過 pywebview JS API 關閉 lobby 視窗（window.close() 在 pywebview 無效）
+        setTimeout(() => {
+            if (window.pywebview) {
+                window.pywebview.api.close_lobby();
+            }
+        }, 300);
     }
 };
 

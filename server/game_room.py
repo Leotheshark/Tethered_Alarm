@@ -6,6 +6,8 @@ class GameRoom:
         self.alarm_time = None  # 鬧鐘設定的時間 (例如 "08:30")
         self.max_players = 4    # 房間上限
         self.host_sid = None    # 房長的 Socket ID (第一位進來的玩家)
+        self.game_client_count = 0      # 已訂閱的 game_client 數量，用於依序指派顏色
+        self.game_client_sids = {}      # { sid: color }，追蹤在線的 game_client
 
     def add_player(self, sid):
         """嘗試將玩家加入房間"""

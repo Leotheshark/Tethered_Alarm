@@ -1,4 +1,5 @@
 # --- 引入工具箱 ---
+import os
 import platform    # 檢查電腦系統 (Windows, Mac, Linux)
 import logging     # 記錄程式執行過程中的資訊 (日誌)
 

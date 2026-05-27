@@ -1,5 +1,10 @@
 # --- 實體與管理模組 ---
 import pygame
+import math
+
+from sync_helpers import RemoteSyncState, apply_server_update, tick_remote_sync
+
+PLAYER_SPEED = 200  # Ghost 預設移動速度（像素/秒），小遊戲可 import 此常數共用
 
 class Entity:
     """
@@ -32,22 +37,168 @@ class Ghost(Entity):
     2. 動畫狀態機：根據移動速度或輸入，決定現在該換成哪一個 visual_key。
     3. 同步機制：預留接收伺服器資料的介面，實作 Week 3 的 LERP 插值平滑移動。
     """
-    def __init__(self, color_key="blue"):
-        super().__init__(640, 360, visual_key=f"ghost_{color_key}_idle")
-        self.speed = 200
+    def __init__(self, color_key="blue", avatar_size=24):
+        self.direction = "right" # 當前朝向：left, right
+        super().__init__(640, 360, visual_key=f"{color_key}_{self.direction}")
+        
+        self.color_key = color_key  # 保存顏色鍵以供 visual_key 更新與 fallback 繪製使用
+        self.avatar_size = avatar_size # 統一使用實體的半徑屬性
+        self.speed = PLAYER_SPEED
         self.state = "IDLE" # 基礎狀態機：IDLE, WALK, DEAD
+        self.current_dx = 0  # 上一幀的原始輸入方向，供網路廣播使用
+        self.current_dy = 0
 
-    def move(self, dx, dy, dt):
+        # 1x2 動畫屬性
+        self.frame_index = 0
+        self.animation_timer = 0.0
+        self.animation_speed = 0.15  # 每 0.15 秒切換一次影格
+
+    def move(self, dx, dy, dt, tile_size=32, is_wall_cb=None):
         """
-        計算位移並根據方向更新狀態（進而影響 visual_key）。
+        執行物理移動。統一整合斜向位移正規化、滑牆碰撞偵測與全域邊界限制。
+        此演算法同時適用於迷宮（需傳入碰撞回呼）與大廳（使用預設值）。
+        :param is_wall_cb: 一個接收 (x, y) 並回傳 bool 的函式，判斷該點是否撞牆。
         """
-        pass
+        self.current_dx, self.current_dy = float(dx), float(dy)
+
+        # 根據水平輸入更新角色朝向（left/right），dx 為 0 時保持上一個方向
+        if dx > 0:
+            self.direction = "right"
+        elif dx < 0:
+            self.direction = "left"
+
+        if dx == 0 and dy == 0:
+            self.state = "IDLE"
+            # 靜止時 visual_key 對應 {color}_{direction}
+            self.visual_key = f"{self.color_key}_{self.direction}"
+            return
+
+        # 1. 斜向移動正規化：確保斜著走的速度與水平/垂直一致 (1.0x 而非 1.414x)
+        nx, ny = dx, dy
+        if dx != 0 and dy != 0:
+            nx, ny = dx * 0.7071, dy * 0.7071
+
+        move_dist_x = abs(nx) * self.speed * dt
+        move_dist_y = abs(ny) * self.speed * dt
+
+        # 2. 準備碰撞與吸附參數 (以傳入的 tile_size 為準，大廳預設 32)
+        radius = self.avatar_size
+        snap_threshold = tile_size * 0.35  # 吸附閾值，輔助玩家對齊走廊中心
+        grid_col, grid_row = int(self.x / tile_size), int(self.y / tile_size)
+        center_x, center_y = grid_col * tile_size + tile_size // 2, grid_row * tile_size + tile_size // 2
+
+        # 3. 定義內部碰撞檢查：檢查角色矩形四角，若無 callback 則視為不撞牆 (大廳模式)
+        def check_collision(nx, ny):
+            if not is_wall_cb:
+                return False
+            # 檢查角色 bounding box 的四個角落是否進入牆面
+            corners = [(nx-radius, ny-radius), (nx+radius, ny-radius),
+                        (nx-radius, ny+radius), (nx+radius, ny+radius)]
+            return any(is_wall_cb(cx, cy) for cx, cy in corners)
+
+        # 4. 走廊吸附 (Corridor Snapping)
+        # 只有在「即將撞牆」的情況下才執行吸附，這能確保在空地不會有磁吸感。
+        # 當玩家移動時蹭到牆邊，或者在轉角處被卡住時，吸附能幫助玩家對齊走廊中心以順利通過。
+        if is_wall_cb:
+            if dx != 0 and dy == 0:  # 純水平移動
+                # 測試如果不吸附，直接前進是否會撞牆（包含因為 y 座標偏移而蹭到側邊的牆）
+                if check_collision(self.x + math.copysign(move_dist_x, dx), self.y):
+                    offset_y = center_y - self.y
+                    if abs(offset_y) <= snap_threshold:
+                        self.y += math.copysign(min(abs(offset_y), move_dist_x * 1.2), offset_y)
+            elif dy != 0 and dx == 0:  # 純垂直移動
+                # 測試如果不吸附，直接前進是否會撞牆
+                if check_collision(self.x, self.y + math.copysign(move_dist_y, dy)):
+                    offset_x = center_x - self.x
+                    if abs(offset_x) <= snap_threshold:
+                        self.x += math.copysign(min(abs(offset_x), move_dist_y * 1.2), offset_x)
+
+        # 5. 分軸位移 (Sliding Physics)：分開處理 X 與 Y，達成流暢的「滑牆」效果
+        if dx != 0:
+            new_x = self.x + math.copysign(move_dist_x, dx)
+            if not check_collision(new_x, self.y): self.x = new_x
+        if dy != 0:
+            new_y = self.y + math.copysign(move_dist_y, dy)
+            if not check_collision(self.x, new_y): self.y = new_y
+
+        # 6. 全域邊界限制 (Boundary Clamp)：確保角色不論在任何模式都不會跑出 1280x720 視窗
+        self.x = max(self.avatar_size, min(1280 - self.avatar_size, self.x))
+        self.y = max(self.avatar_size, min(720 - self.avatar_size, self.y))
+
+        self.state = "WALK"
+        self.visual_key = f"{self.color_key}_{self.direction}"
 
     def update(self, dt):
         """
         處理物理更新與動畫影格切換。
         """
-        pass
+        # 只有在行走狀態才進行影格切換計時
+        if self.state == "WALK":
+            self.animation_timer += dt
+            if self.animation_timer >= self.animation_speed:
+                self.animation_timer = 0
+                self.frame_index = (self.frame_index + 1) % 2
+        else:
+            # 靜止時固定在第 0 影格（通常是靜止影格）
+            self.frame_index = 0
+       
+
+    def get_sprite_rect(self, surface):
+        """1x2 切割：寬度不變，高度除以 2"""
+        w, h = surface.get_size()
+        frame_h = h // 2
+        return pygame.Rect(0, self.frame_index * frame_h, w, frame_h)
+
+class RemoteGhost(Entity):
+    """
+    遠端玩家實體：透過 sync_helpers 套用 LERP + Dead Reckoning，平滑渲染遠端位置。
+    """
+    SPEED = PLAYER_SPEED  # 與 Ghost 相同，供 Dead Reckoning 預測位移使用
+    AVATAR_SIZE = 24
+    # 大廳場景邊界（畫面 1280x720 扣除頭像半徑）
+    _BOUNDS = (AVATAR_SIZE, AVATAR_SIZE, 1280 - AVATAR_SIZE, 720 - AVATAR_SIZE)
+    _DR_TIMEOUT = 0.2  # 大廳對抖動容忍度較高，採用稍寬鬆的超時
+
+    def __init__(self, player_id, color_key="green"):
+        self.direction = "right"
+        super().__init__(640, 360, visual_key=f"{color_key}_{self.direction}")
+        self.player_id = player_id
+        self.color_key = color_key
+        self.sync = RemoteSyncState(target_x=640.0, target_y=360.0)
+        self.disconnected = False  # 隊友斷線標記，由 Engine 設定
+        self.state = "IDLE"
+        self.frame_index = 0
+        self.animation_timer = 0.0
+        self.animation_speed = 0.15
+
+    def apply_server_update(self, x, y, dx, dy):
+        """收到伺服器轉發的封包時，更新目標位置與速度方向，並切換動畫狀態。"""
+        apply_server_update(self.sync, x, y, dx, dy)
+        self.state = "WALK" if (dx != 0 or dy != 0) else "IDLE"
+        if dx > 0:
+            self.direction = "right"
+        elif dx < 0:
+            self.direction = "left"
+
+        self.visual_key = f"{self.color_key}_{self.direction}"
+
+    def update(self, dt):
+        """每幀：Dead Reckoning 預測目標 + LERP 平滑逼近渲染位置。"""
+        tick_remote_sync(self, self.sync, dt, self.SPEED,
+                         bounds=self._BOUNDS, dr_timeout=self._DR_TIMEOUT)
+        
+        # 更新遠端玩家動畫
+        self.animation_timer += dt
+        if self.animation_timer >= self.animation_speed:
+            self.animation_timer = 0
+            self.frame_index = (self.frame_index + 1) % 2
+
+
+    def get_sprite_rect(self, surface):
+        w, h = surface.get_size()
+        frame_h = h // 2
+        return pygame.Rect(0, self.frame_index * frame_h, w, frame_h)
+
 
 class StaticObject(Entity):
     """
@@ -62,34 +213,37 @@ class StaticObject(Entity):
         super().__init__(x, y, visual_key)
         self.collidable = True # 是否具備碰撞功能
 
-class EntityManager:
+class TestEntity(Entity):
     """
-    實體管理員 (Entity Manager)
+    測試用 5x5 精靈圖實體 (Test Entity)
     
     職責：
-    1. 容器功能：持有遊戲中所有的 Entity 實例。
-    2. 批量操作：一鍵執行所有物件的 update。
-    3. 渲染橋樑：提供 draw_all 所需的實體清單，並依據物件類型進行簡單排序。
+    1. 影格管理：管理 5x5 格式大圖的當前播放影格索引 (0-24)。
+    2. 切割計算：根據 frame_index 計算在大圖上的矩形範圍 (Rect)。
+    3. 自動播放：在 update 中根據時間自動循環切換影格。
     """
-    def __init__(self):
-        self.entities = []
+    def __init__(self, x, y, visual_key):
+        super().__init__(x, y, visual_key)
+        self.frame_index = 0
+        self.animation_timer = 0
+        self.animation_speed = 0.05  # 每 0.05 秒切換一次影格
+        self.rows = 5
+        self.cols = 5
 
-    def add(self, entity):
-        """
-        將新的物件加入世界。
-        可以根據 tag 決定加入哪一個層級的清單。
-        """
-        self.entities.append(entity)
+    def update(self, dt):
+        """更新動畫影格循環"""
+        self.animation_timer += dt
+        if self.animation_timer >= self.animation_speed:
+            self.animation_timer = 0
+            # 在 25 個影格 (5x5) 之間循環播放
+            self.frame_index = (self.frame_index + 1) % (self.rows * self.cols)
 
-    def update_all(self, dt):
-        for entity in self.entities:
-            entity.update(dt)
-
-    def draw_all(self, screen):
-        """
-        注意：這裡不直接呼叫 entity.draw()。
-        而是應該由 Renderer 負責，這裡僅提供資料。
-        符合「視覺資源由註冊中心統一調度」的原則。
-        """
-        # TODO: 實作根據 Z-index 或 Y 座標排序繪製，確保物件遮擋關係正確
-        pass
+    def get_sprite_rect(self, surface):
+        """計算並回傳當前影格在 spritesheet 上的 Rect 範圍，供 Renderer 呼叫"""
+        frame_w = surface.get_width() // self.cols
+        frame_h = surface.get_height() // self.rows
+        
+        col = self.frame_index % self.cols
+        row = self.frame_index // self.cols
+        
+        return pygame.Rect(col * frame_w, row * frame_h, frame_w, frame_h)

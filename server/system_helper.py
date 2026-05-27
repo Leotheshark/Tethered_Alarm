@@ -43,6 +43,13 @@ class SystemHelper:
         """偵測當前預設輸出裝置是否為喇叭"""
         if sys.platform == "win32":
             try:
+                # 在背景執行緒中使用 pycaw (COM) 前必須先初始化
+                ctypes.windll.ole32.CoInitialize(None)
+            except:
+                pass
+
+        if sys.platform == "win32":
+            try:
                 devices = AudioUtilities.GetSpeakers()
                 if not devices:
                     return True
