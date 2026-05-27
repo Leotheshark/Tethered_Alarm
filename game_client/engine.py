@@ -355,7 +355,9 @@ class GameEngine:
                     # TODO: 廣播通關訊息，回到大廳流程
             else:
                 # 遊戲大廳/等待模式：使用一般角色移動
-                self.player.move(dx, dy, dt)
+                # 大廳中收集所有遠端玩家的 rect
+                other_rects = [g.rect for g in self.remote_ghosts.values() if not g.disconnected]
+                self.player.move(dx, dy, dt, others=other_rects)
                 self.entity_manager.update_all(dt)
 
             # 定期廣播基礎位置 (Presence Heartbeat)
