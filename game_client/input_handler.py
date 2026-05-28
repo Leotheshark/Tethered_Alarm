@@ -21,7 +21,7 @@ def is_key_pressed(vk_code):
 
 # DEBUG 多視窗模式：GetAsyncKeyState 是全域狀態，4 個 client 同時讀會一起動。
 # 只在自己的視窗為最上層時才接受輸入。
-_REQUIRE_FOREGROUND = os.environ.get('DEBUG_WINDOWED') == '1'
+_REQUIRE_FOREGROUND = os.environ.get('DEBUG_MODE') == '1'
 
 
 def _is_my_window_foreground():

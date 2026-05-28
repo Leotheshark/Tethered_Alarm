@@ -156,44 +156,44 @@ class Renderer:
         for color, pdata in sorted_players:
             px = int(pdata.get("x", 0)) - ox
             py = int(pdata.get("y", 0)) - oy
-            alive = pdata.get("alive", True)
+            is_alive = pdata.get("is_alive", True)
             perm_down = pdata.get("permanently_down", False)
             rescue_prog = pdata.get("rescue_progress", 0.0)
             rgb = _PLAYER_COLORS.get(color, (200, 200, 200))
-            radius = pdata.get("avatar_size", 15)
-
+            radius = pdata.get("avatar_size", 28) # 預設為 32，配合 64x64px 角色
 
             if perm_down:
                 # 永久倒地：灰色 X 符號
                 pygame.draw.line(self.screen, (80, 80, 80), (px - 12, py - 12), (px + 12, py + 12), 3)
                 pygame.draw.line(self.screen, (80, 80, 80), (px + 12, py - 12), (px - 12, py + 12), 3)
-            elif not alive:
-                # 暫時倒地：半透明灰圈 + 救援進度弧線
-                pygame.draw.circle(self.screen, (80, 80, 80), (px, py), 16, 3)
-                if rescue_prog > 0:
-                    # 進度弧線：順時針從 12 點開始
-                    frac = min(rescue_prog / 2.0, 1.0)  # RESCUE_HOLD_TIME=2.0
-                    end_angle = -math.pi / 2 + frac * 2 * math.pi
-                    pygame.draw.arc(
-                        self.screen, (255, 220, 50),
-                        (px - 18, py - 18, 36, 36),
-                        -math.pi / 2, end_angle, 4
-                    )
             else:
-                # 正常狀態：優先嘗試繪製精靈圖 (1x2 影格)
+                # 正常狀態或暫時倒地：優先嘗試繪製精靈圖
                 vkey = pdata.get("visual_key")
                 surface = VisualRegistry.get_surface(vkey) if vkey else None
                 if surface:
-                    frame_idx = pdata.get("frame_index", 0)
+                    # 同步水平切割邏輯：left/right 3 欄，其餘 2 欄
+                    cols = 3 if (vkey and ("left" in vkey or "right" in vkey)) else 2
+                    # 修正：加上 % cols 確保索引安全，防止角色在切換狀態時瞬間消失
+                    frame_idx = pdata.get("frame_index", 0) % cols
                     w, h = surface.get_size()
-                    # 依照 entities.py 規範，角色精靈圖採 1 欄 2 列垂直排列
-                    frame_h = h // 2
-                    area = pygame.Rect(0, frame_idx * frame_h, w, frame_h)
-                    self.screen.blit(surface, (px - w // 2, py - frame_h // 2), area)
+                    frame_w = w // cols
+                    area = pygame.Rect(frame_idx * frame_w, 0, frame_w, h)
+                    self.screen.blit(surface, (px - frame_w // 2, py - h // 2), area)
                 else:
                     # 資源未載入時的備援：繪製填色圓形
                     pygame.draw.circle(self.screen, rgb, (px, py), radius)
 
+                # 暫時倒地時繪製救援進度弧線
+                if not is_alive and rescue_prog > 0:
+                    pygame.draw.circle(self.screen, (80, 80, 80), (px, py), radius + 2, 3) # 繪製外圈
+                    frac = min(rescue_prog / 2.0, 1.0)  # RESCUE_HOLD_TIME=2.0
+                    end_angle = -math.pi / 2 + frac * 2 * math.pi
+                    pygame.draw.arc(
+                        self.screen, (255, 220, 50),
+                        (px - radius - 4, py - radius - 4, (radius + 4) * 2, (radius + 4) * 2), # 弧線的繪製範圍
+                        -math.pi / 2, end_angle, 4
+                    )
+                
                 # 狀態疊加：不論是圓形或精靈圖，都疊加緩速環
                 if pdata.get("debuff") or pdata.get("spike"):
                     pygame.draw.circle(self.screen, (200, 100, 255), (px, py), radius + 2, 2)

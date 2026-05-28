@@ -11,9 +11,7 @@ Reverse Pac-Man 小遊戲邏輯模組。
 其他客戶端接收廣播後純粹更新渲染位置，不自行計算 AI。
 """
 
-import json
 import math
-import os
 import time
 from collections import deque
 
@@ -29,12 +27,7 @@ G = 3   # Gate（閘門，初始關閉）
 B = 4   # Button（按鈕，踩下開啟對應閘門）
 S = 5   # Spike（釘板，踩上後速度減半 3 秒）
 
-# ─── 地圖定義（17 行 × 32 列，TILE_SIZE=40px）────────────────────────────────
-# 按鈕與閘門的交叉配對設計：
-#   Button A (3,4)   ↔ Gate D (16,27) — 左上按鈕開啟右下閘門
-#   Button B (14,4)  ↔ Gate A (3,25)  — 左下按鈕開啟右上閘門
-#   Button C (3,26)  ↔ Gate C (12,6)  — 右上按鈕開啟左下閘門
-#   Button D (14,26) ↔ Gate B (5,7)   — 右下按鈕開啟左上閘門
+# ─── 地圖定義（17 行 × 32 列，TILE_SIZE=60px，符合 1920x1080） ──────────────
 MAP_LAYOUT = [
     # 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
     [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],  # 0
@@ -48,8 +41,8 @@ MAP_LAYOUT = [
     [W, P, P, P, P, W, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W, P, P, P, W],  # 8
     [W, W, W, W, P, W, P, W, W, W, W, W, P, W, W, P, W, W, P, W, W, W, W, W, P, W, P, W, W, W, W, W],  # 9
     [W, P, P, P, P, P, P, P, P, P, P, P, P, W, W, P, W, W, P, P, P, P, P, P, P, P, P, P, P, P, P, W],  # 10
-    [W, W, W, W, P, W, P, W, W, W, W, W, P, W, W, P, W, W, P, W, W, W, W, W, P, W, P, W, W, W, W, W],  # 11
-    [W, W, W, W, P, W, G, W, W, W, W, W, P, W, W, P, W, W, P, W, W, W, W, W, P, W, P, W, W, W, W, W],  # 11
+    [W, W, W, W, P, W, P, W, W, W, W, W, P, W, W, P, W, W, P, W, W, W, W, W, P, W, P, W, W, W, P, W],  # 11
+    [W, W, W, W, P, W, G, W, W, W, W, W, P, W, W, P, W, W, P, W, W, W, W, W, P, W, P, W, W, W, P, W],  # 11
     [W, P, P, P, P, W, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W, P, P, P, W],  # 12
     [W, P, W, W, B, W, W, W, P, W, W, W, W, W, W, W, W, W, W, W, P, W, P, W, W, W, B, W, W, W, P, W],  # 13
     [W, P, W, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, W, W, P, W, P, W, W, W, P, W, W, W, P, W],  # 14
@@ -57,17 +50,17 @@ MAP_LAYOUT = [
     [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],  # 16
 ]
 
-ROWS = len(MAP_LAYOUT)      # 25
-COLS = len(MAP_LAYOUT[0])   # 48
-TILE_SIZE = 40
-AVATAR_SIZE = 18
+ROWS = len(MAP_LAYOUT)
+COLS = len(MAP_LAYOUT[0])
+TILE_SIZE = 60
+AVATAR_SIZE = 28
 
 # ─── 玩家初始出生位置（格座標，依顏色）──────────────────────────────────────
 SPAWN_TILES = {
     "blue":  (1, 1),    # 左上
     "green": (15, 30),  # 右下（移動到新的倒數第二行）
     "pink":  (1, 30),   # 右上
-    "red":   (15, 1),   # 左下（移動到新的倒數第二行）
+    "red":   (16, 1),   # 左下
 }
 
 # Pac-Man 初始出生格
@@ -75,11 +68,11 @@ PACMAN_SPAWN_TILE = (8, 16)  # 地圖中心
 
 # ─── 遊戲數值常數 ─────────────────────────────────────────────────────────────
 # PLAYER_SPEED 由 entities.py 提供，確保與 Ghost 預設速度一致
-PACMAN_BASE_SPEED   = 50   # 正常速度
+PACMAN_BASE_SPEED   = 100   # 正常速度
 PACMAN_FAST_SPEED   = 165   # 被獵食後暫時加速（1.5 倍）
-CATCH_RADIUS        = 18    # 捕捉碰撞半徑（像素）
+CATCH_RADIUS        = 56    # 增加捕捉半徑，配合 64x64 的角色尺寸
 MAX_RESCUES         = 2     # 每位玩家被救援的上限次數
-RESCUE_RADIUS       = 50    # 救援互動的有效距離（像素）
+RESCUE_RADIUS       = 70    # 救援互動的有效距離（像素）
 RESCUE_HOLD_TIME    = 2.0   # 按住 E 多少秒才完成救援
 DEBUFF_DURATION     = 15.0  # 被抓後移速減半持續秒數
 SPIKE_SLOW_DURATION = 3.0   # 釘板緩速持續秒數
@@ -94,70 +87,6 @@ BUTTON_GATE_MAP = {
     (3,  26): (12, 6),    # Button C (右上) -> Gate (左下)
     (14, 26): (5,  7),    # Button D (右下) -> Gate (左上)
 }
-
-
-# ─── 關卡 JSON 載入器 ─────────────────────────────────────────────────────────
-# JSON 字串 → tile 整數常數的對照（與檔頭的 W/E/P/G/B/S 一致）
-_CHAR_TO_TILE = {'W': W, '.': E, 'P': P, 'G': G, 'B': B, 'S': S}
-
-# 預設關卡檔路徑：repo_root/maps/<name>.json，找不到時 fallback 至上方寫死的常數
-_MAPS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "maps"))
-
-
-def load_map(map_name: str = "level_default") -> bool:
-    """
-    從 maps/<map_name>.json 載入關卡，覆寫模組級的 MAP_LAYOUT / SPAWN_TILES /
-    PACMAN_SPAWN_TILE / BUTTON_GATE_MAP / ROWS / COLS / TILE_SIZE。
-
-    回傳 True 表示成功；False 表示檔案不存在或格式錯誤，呼叫端可選擇沿用內建關卡。
-    本函式有副作用（修改模組級常數），但同一 client 同時間只跑一個 ReversePacman 實例，
-    所以不會產生競態。多關卡需求出現時再重構為實例屬性。
-    """
-    global MAP_LAYOUT, ROWS, COLS, TILE_SIZE, SPAWN_TILES, PACMAN_SPAWN_TILE, BUTTON_GATE_MAP
-
-    path = os.path.join(_MAPS_DIR, f"{map_name}.json")
-    if not os.path.isfile(path):
-        print(f"[ReversePacman] map file not found: {path}, using built-in constants")
-        return False
-
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        tiles_str = data["tiles"]
-        new_layout = [[_CHAR_TO_TILE[ch] for ch in row] for row in tiles_str]
-
-        spawns = data["spawns"]
-        new_spawn_tiles = {
-            color: tuple(spawns[color]) for color in ("blue", "green", "pink", "red")
-        }
-        new_pacman_spawn = tuple(spawns["pacman"])
-
-        new_button_gate = {
-            tuple(entry["button"]): tuple(entry["gate"])
-            for entry in data["button_gate_map"]
-        }
-
-        # 全部解析成功才覆寫，避免半套狀態
-        MAP_LAYOUT       = new_layout
-        ROWS             = data.get("rows", len(new_layout))
-        COLS             = data.get("cols", len(new_layout[0]) if new_layout else 0)
-        TILE_SIZE        = data.get("tile_size", TILE_SIZE)
-        SPAWN_TILES      = new_spawn_tiles
-        PACMAN_SPAWN_TILE = new_pacman_spawn
-        BUTTON_GATE_MAP  = new_button_gate
-
-        print(f"[ReversePacman] loaded map: {map_name} ({ROWS}x{COLS}, "
-              f"{sum(row.count(P) for row in new_layout)} pellets)")
-        return True
-    except (KeyError, ValueError, json.JSONDecodeError) as e:
-        print(f"[ReversePacman] failed to parse map {path}: {e}, using built-in constants")
-        return False
-
-
-# 模組載入時自動套用 maps/level_default.json，若檔案缺失或格式錯誤則沿用上方常數
-load_map("level_default")
-
 
 def tile_center(row, col):
     """回傳指定格子中心點的像素座標 (x, y)。"""
@@ -214,7 +143,6 @@ class PlayerState(Ghost):
     """單一玩家在小遊戲中的所有狀態資料。"""
 
     def __init__(self, color, spawn_row, spawn_col):
-        self.alive = True           # True = 正常行動，False = 被抓住等待救援
         self.rescue_count = 0       # 已被救援次數
         self.debuff_timer = 0.0     # 被救援後的速度減半倒數
         self.spike_timer = 0.0      # 踩到釘板後的緩速倒數
@@ -233,7 +161,7 @@ class PlayerState(Ghost):
     @property
     def speed(self):
         """根據當前狀態決定移動速度（釘板或被救後減半）。"""
-        if not self.alive:
+        if not self.is_alive:
             return 0.0
         # 使用被設定的基礎速度，若無則回退至常數
         base = getattr(self, '_base_speed', PLAYER_SPEED)
@@ -248,7 +176,7 @@ class PlayerState(Ghost):
     @property
     def permanently_down(self):
         """已達最大救援次數且再次倒下，無法再被救援。"""
-        return not self.alive and self.rescue_count >= MAX_RESCUES
+        return not self.is_alive and self.rescue_count >= MAX_RESCUES
 
 
 class PacManState:
@@ -351,7 +279,8 @@ class ReversePacman(BaseLogicInterface):
                 p = self.players[color]
                 p.x, p.y = float(cx), float(cy)
                 reset_sync_state(p.sync, float(cx), float(cy))
-                p.alive = True
+                p.is_alive = True
+                p.visual_key = f"{color}_{p.direction}"
                 p.rescue_count = 0
                 p.debuff_timer = 0.0
                 p.spike_timer = 0.0
@@ -398,7 +327,7 @@ class ReversePacman(BaseLogicInterface):
             local_pos = (local.x, local.y) if local else None
             states = {
                 c: {
-                    "alive": p.alive,
+                    "is_alive": p.is_alive,
                     "perm_down": p.permanently_down,
                     "rescue_count": p.rescue_count,
                     "pos": (round(p.x, 1), round(p.y, 1)),
@@ -446,7 +375,7 @@ class ReversePacman(BaseLogicInterface):
         local = self.players.get(self.local_color)
 
         # 1. 更新本地玩家移動
-        if local and local.alive and not local.permanently_down:
+        if local and local.is_alive and not local.permanently_down:
             # 收集其他玩家的碰撞矩形（包含倒地者）
             other_rects = [p.rect for c, p in self.players.items() if c != self.local_color]
             # 使用封裝在實體中的移動邏輯
@@ -494,15 +423,16 @@ class ReversePacman(BaseLogicInterface):
             self._rescue_debug_timer = getattr(self, "_rescue_debug_timer", 0.0) + dt
             if self._rescue_debug_timer >= 0.5:
                 self._rescue_debug_timer = 0.0
-                t_alive = target.alive if target else "no-target"
+                t_alive = target.is_alive if target else "no-target"
                 t_perm = target.permanently_down if target else "no-target"
                 t_prog = round(target.rescue_progress, 2) if target else "no-target"
                 print(f"[ReversePacman] rescuing {self._rescuing_target}: alive={t_alive} perm={t_perm} dist={round(dist_now or -1, 1)} in_range={in_range} progress={t_prog}")
-            if target and not target.alive and not target.permanently_down and in_range:
+            if target and not target.is_alive and not target.permanently_down and in_range:
                 target.rescue_progress += dt
                 if target.rescue_progress >= RESCUE_HOLD_TIME:
                     # 救援完成：復活目標玩家
-                    target.alive = True
+                    target.is_alive = True
+                    target.visual_key = f"{target.color_key}_{target.direction}"
                     target.rescue_count += 1
                     target.debuff_timer = DEBUFF_DURATION  # 被救後速度減半
                     target.rescue_progress = 0.0
@@ -540,7 +470,7 @@ class ReversePacman(BaseLogicInterface):
         for color, p in self.players.items():
             if color == self._rescuing_target:
                 continue  # 本機是救援者，已在 3a 處理
-            if p.being_rescued and not p.alive and not p.permanently_down:
+            if p.being_rescued and not p.is_alive and not p.permanently_down:
                 p.rescue_progress = min(p.rescue_progress + dt, RESCUE_HOLD_TIME)
 
         # 3.5. 壓力板閘門：authority 每幀重新評估，狀態變化才廣播
@@ -598,7 +528,7 @@ class ReversePacman(BaseLogicInterface):
                 color: {
                     "x":              p.x,
                     "y":              p.y,
-                    "alive":          p.alive,
+                    "is_alive":       p.is_alive,
                     "permanently_down": p.permanently_down,
                     "rescue_progress": p.rescue_progress,
                     "rescue_count":   p.rescue_count,
@@ -633,7 +563,7 @@ class ReversePacman(BaseLogicInterface):
             "y":     local.y,
             "dx":    local.current_dx,
             "dy":    local.current_dy,
-            "alive": local.alive,
+            "is_alive": local.is_alive,
         }
 
     def receive_sync_data(self, data: dict):
@@ -658,9 +588,10 @@ class ReversePacman(BaseLogicInterface):
                     raw_dy *= 0.7071
                 
                 # 更新遠端玩家視覺朝向
-                p.state = "WALK" if (raw_dx != 0 or raw_dy != 0) else "IDLE"
                 if raw_dx > 0: p.direction = "right"
                 elif raw_dx < 0: p.direction = "left"
+                elif raw_dy != 0: p.direction = "frontback"
+                else: p.direction = "idle"
                 p.visual_key = f"{p.color_key}_{p.direction}"
 
                 apply_server_update(p.sync,
@@ -714,9 +645,9 @@ class ReversePacman(BaseLogicInterface):
             # 由 Pac-Man authority 廣播：標記玩家為倒地，避免被抓者本人持續送出 alive=True
             color = data.get("color")
             p = self.players.get(color)
-            print(f"[ReversePacman] received player_caught: color={color} (local={self.local_color}, existing_alive={p.alive if p else 'N/A'}, rescue_count={p.rescue_count if p else 'N/A'})")
-            if p and p.alive:
-                p.alive = False
+            print(f"[ReversePacman] received player_caught: color={color} (local={self.local_color}, existing_alive={p.is_alive if p else 'N/A'}, rescue_count={p.rescue_count if p else 'N/A'})")
+            if p and p.is_alive:
+                p.is_alive = False
                 p.rescue_progress = 0.0
                 p.being_rescued = False  # 被抓時若剛好正在被救，清掉進度條旗標
 
@@ -724,9 +655,10 @@ class ReversePacman(BaseLogicInterface):
             # 由執行救援的 client 廣播：標記玩家為復活，套用 debuff 與救援次數
             color = data.get("color")
             p = self.players.get(color)
-            print(f"[ReversePacman] received player_rescued: color={color} (local={self.local_color}, existing_alive={p.alive if p else 'N/A'})")
-            if p and not p.alive:
-                p.alive = True
+            print(f"[ReversePacman] received player_rescued: color={color} (local={self.local_color}, existing_alive={p.is_alive if p else 'N/A'})")
+            if p and not p.is_alive:
+                p.is_alive = True
+                p.visual_key = f"{p.color_key}_{p.direction}"
                 p.rescue_count = data.get("rescue_count", p.rescue_count + 1)
                 p.debuff_timer = DEBUFF_DURATION
                 p.rescue_progress = 0.0
@@ -737,7 +669,7 @@ class ReversePacman(BaseLogicInterface):
             color = data.get("color")
             p = self.players.get(color)
             if p:
-                p.being_rescued = True
+                if not p.is_alive: p.being_rescued = True
                 p.rescue_progress = 0.0
 
         elif dtype == "rescue_progress_stop":
@@ -811,7 +743,7 @@ class ReversePacman(BaseLogicInterface):
             best_dist = float("inf")
             best_color = None
             for color, p in self.players.items():
-                if not p.alive:
+                if not p.is_alive:
                     continue
                 pr, pc = pixel_to_tile(p.x, p.y)
                 d = abs(pr - pm_row) + abs(pc - pm_col)
@@ -850,7 +782,7 @@ class ReversePacman(BaseLogicInterface):
 
         # 碰撞偵測：Pac-Man 是否抓到任何存活玩家
         for color, p in self.players.items():
-            if not p.alive:
+            if not p.is_alive:
                 continue
             if math.hypot(pm.x - p.x, pm.y - p.y) < CATCH_RADIUS:
                 self._catch_player(p)
@@ -866,7 +798,7 @@ class ReversePacman(BaseLogicInterface):
         # 1. 算出當下被踩的 button 座標集合（只看存活玩家、不看 Pac-Man）
         pressed_buttons = set()
         for p in self.players.values():
-            if not p.alive:
+            if not p.is_alive:
                 continue
             r, c = pixel_to_tile(p.x, p.y)
             if 0 <= r < ROWS and 0 <= c < COLS and (r, c) in BUTTON_GATE_MAP:
@@ -911,7 +843,7 @@ class ReversePacman(BaseLogicInterface):
         # 嘗試順序：上、下、左、右
         neighbors = [(gr - 1, gc), (gr + 1, gc), (gr, gc - 1), (gr, gc + 1)]
         for p in self.players.values():
-            if not p.alive:
+            if not p.is_alive:
                 continue
             pr, pc = pixel_to_tile(p.x, p.y)
             if (pr, pc) != (gr, gc):
@@ -938,10 +870,11 @@ class ReversePacman(BaseLogicInterface):
         - Pac-Man 獲得短暫加速。
         - 廣播 player_caught 給其他 client，避免被抓者本人持續廣播 alive=True 把狀態蓋回去。
         """
-        if not player.alive:
+        if not player.is_alive:
             return  # 已經倒地，不重複觸發
 
-        player.alive = False
+        player.is_alive = False
+        player.visual_key = "dead"
         player.rescue_progress = 0.0
         self.pacman.speed_boost_timer = PACMAN_BOOST_DURATION
         print(f"[ReversePacman] {player.color_key} caught! rescue_count={player.rescue_count}")
@@ -966,7 +899,7 @@ class ReversePacman(BaseLogicInterface):
         for color, p in self.players.items():
             if color == self.local_color:
                 continue
-            if p.alive or p.permanently_down:
+            if p.is_alive or p.permanently_down:
                 continue
             dist = math.hypot(local.x - p.x, local.y - p.y)
             if dist <= RESCUE_RADIUS:

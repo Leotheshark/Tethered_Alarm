@@ -27,21 +27,21 @@ S = 5   # Spike（釘板，踩上後速度減半 3 秒）
 
 # ─── 地圖定義（與 Reverse Pac-Man 相同） ────────────────────────────────
 MAP_LAYOUT = [
-    [W] * 40,
-    *([[W] + [E] * 38 + [W]] * 19),
-    [W] * 40
+    [W] * 32,
+    *([[W] + [E] * 30 + [W]] * 15),
+    [W] * 32
 ]
 
 ROWS = len(MAP_LAYOUT)
 COLS = len(MAP_LAYOUT[0])
-TILE_SIZE = 32
-AVATAR_SIZE = 14
+TILE_SIZE = 60
+AVATAR_SIZE = 28
 
 SPAWN_TILES = {
     "blue":  (1, 1),
-    "green": (19, 38),
-    "pink":  (1, 38),
-    "red":   (19, 1),
+    "green": (15, 30),
+    "pink":  (1, 30),
+    "red":   (15, 1),
 }
 
 # ─── 遊戲數值常數 ─────────────────────────────────────────────────────────────
@@ -71,7 +71,6 @@ def is_wall(tile_map, row, col):
 
 class PlayerState(Ghost):
     def __init__(self, color, spawn_row, spawn_col):
-        self.alive = True
         self.rescue_count = 0
         self.debuff_timer = 0.0
         self.spike_timer = 0.0
@@ -85,7 +84,7 @@ class PlayerState(Ghost):
 
     @property
     def speed(self):
-        if not self.alive: return 0.0
+        if not self.is_alive: return 0.0
         base = getattr(self, '_base_speed', PLAYER_SPEED)
         if self.debuff_timer > 0 or self.spike_timer > 0:
             base *= 0.5
@@ -97,7 +96,7 @@ class PlayerState(Ghost):
 
     @property
     def permanently_down(self):
-        return not self.alive and self.rescue_count >= MAX_RESCUES
+        return not self.is_alive and self.rescue_count >= MAX_RESCUES
 
 class DodgeKnives(BaseLogicInterface):
     def __init__(self, socket_client, player_id_list):
@@ -131,7 +130,8 @@ class DodgeKnives(BaseLogicInterface):
             cx, cy = tile_center(sr, sc)
             p.x, p.y = float(cx), float(cy)
             reset_sync_state(p.sync, float(cx), float(cy))
-            p.alive = True
+            p.is_alive = True
+            p.visual_key = f"{p.color_key}_{p.direction}"
             p.rescue_count = 0
             p.rescue_progress = 0.0
             p.being_rescued = False
@@ -168,7 +168,7 @@ class DodgeKnives(BaseLogicInterface):
         if not self.is_active or self._cleared: return
 
         local = self.players.get(self.local_color)
-        if local and local.alive:
+        if local and local.is_alive:
             # 收集其他玩家的碰撞矩形（包含倒地者），使其成為物理障礙
             other_rects = [p.rect for c, p in self.players.items() if c != self.local_color]
             local.move(self._input_dx, self._input_dy, dt, TILE_SIZE, 
@@ -190,10 +190,11 @@ class DodgeKnives(BaseLogicInterface):
         # 處理救援
         if self._rescuing_target:
             target = self.players.get(self._rescuing_target)
-            if target and not target.alive and math.hypot(local.x - target.x, local.y - target.y) <= RESCUE_RADIUS:
+            if target and not target.is_alive and math.hypot(local.x - target.x, local.y - target.y) <= RESCUE_RADIUS:
                 target.rescue_progress += dt
                 if target.rescue_progress >= RESCUE_HOLD_TIME:
-                    target.alive = True
+                    target.is_alive = True
+                    target.visual_key = f"{target.color_key}_{target.direction}"
                     target.rescue_count += 1
                     target.debuff_timer = DEBUFF_DURATION
                     target.being_rescued = False
@@ -222,7 +223,7 @@ class DodgeKnives(BaseLogicInterface):
             "pellets_left": self.pellets_remaining,
             "players": {
                 color: {
-                    "x": p.x, "y": p.y, "alive": p.alive,
+                    "x": p.x, "y": p.y, "is_alive": p.is_alive,
                     "permanently_down": p.permanently_down,
                     "rescue_progress": p.rescue_progress,
                     "rescue_count": p.rescue_count,
@@ -253,10 +254,11 @@ class DodgeKnives(BaseLogicInterface):
             p = self.players.get(color)
             if p and color != self.local_color:
                 rdx, rdy = data.get("dx", 0.0), data.get("dy", 0.0)
-                # 更新遠端玩家的動畫朝向與狀態
-                p.state = "WALK" if (rdx != 0 or rdy != 0) else "IDLE"
+                # 更新遠端玩家的動畫朝向
                 if rdx > 0: p.direction = "right"
                 elif rdx < 0: p.direction = "left"
+                elif rdy != 0: p.direction = "frontback"
+                else: p.direction = "idle"
                 p.visual_key = f"{p.color_key}_{p.direction}"
 
                 if rdx != 0 and rdy != 0: rdx, rdy = rdx*0.7071, rdy*0.7071
@@ -274,7 +276,8 @@ class DodgeKnives(BaseLogicInterface):
             color = data.get("color")
             p = self.players.get(color)
             if p:
-                p.alive = True
+                p.is_alive = True
+                p.visual_key = f"{p.color_key}_{p.direction}"
                 p.rescue_count = data.get("rescue_count")
                 p.debuff_timer = DEBUFF_DURATION
                 p.being_rescued = False
@@ -301,7 +304,7 @@ class DodgeKnives(BaseLogicInterface):
     def _evaluate_gates(self):
         pressed_buttons = set()
         for p in self.players.values():
-            if not p.alive: continue
+            if not p.is_alive: continue
             r, c = pixel_to_tile(p.x, p.y)
             if (r, c) in BUTTON_GATE_MAP: pressed_buttons.add((r, c))
 
@@ -331,7 +334,7 @@ class DodgeKnives(BaseLogicInterface):
         local = self.players.get(self.local_color)
         for color, p in self.players.items():
             if color == self.local_color: continue
-            if not p.alive and not p.permanently_down:
+            if not p.is_alive and not p.permanently_down:
                 if math.hypot(local.x - p.x, local.y - p.y) <= RESCUE_RADIUS:
                     return color
         return None
