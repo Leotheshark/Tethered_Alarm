@@ -47,6 +47,14 @@ from system_helper import SystemHelper  # type: ignore
 
 class GameEngine:
     def __init__(self):
+        # 0. 解決 Windows 高 DPI 縮放問題，確保 1920x1080 視窗不會被系統自動放大
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
         # 1. 僅初始化音訊與基礎模組，暫不啟動顯示模組
         pygame.mixer.pre_init(44100, -16, 2, 512)
         pygame.init()
@@ -163,7 +171,8 @@ class GameEngine:
         print("[Engine] 正在建立遊戲視窗...")
         # DEBUG_WINDOWED=1：以視窗模式建立，方便同時開多個 client 排列在螢幕上
         if os.environ.get('DEBUG_WINDOWED') == '1':
-            self.screen = pygame.display.set_mode((1280, 720))
+            # 解析度提升至 1920x1080
+            self.screen = pygame.display.set_mode((1920, 1080), pygame.SCALED)
             # 視窗建立後再移動到指定位置（由 DEBUG_WINDOW_POS=x,y 指定）
             pos = os.environ.get('DEBUG_WINDOW_POS')
             if pos:
@@ -171,11 +180,11 @@ class GameEngine:
                     x, y = (int(v) for v in pos.split(','))
                     from ctypes import windll
                     hwnd = pygame.display.get_wm_info()['window']
-                    windll.user32.MoveWindow(hwnd, x, y, 1280, 720, True)
+                    windll.user32.MoveWindow(hwnd, x, y, 1920, 1080, True)
                 except Exception as _e:
                     print(f"[Engine] DEBUG_WINDOW_POS 失敗：{_e}")
         else:
-            self.screen = pygame.display.set_mode((1280, 720), pygame.FULLSCREEN | pygame.SCALED)
+            self.screen = pygame.display.set_mode((1920, 1080), pygame.FULLSCREEN | pygame.SCALED)
         caption = os.environ.get('DEBUG_TITLE', 'Co-up: Tethered Alarm')
         pygame.display.set_caption(caption)
         self.renderer = Renderer(self.screen)
@@ -183,10 +192,11 @@ class GameEngine:
 
         # 批次載入玩家精靈圖 (現在視窗已開啟，可以安全地執行 convert_alpha)
         _colors = ["blue", "red", "pink", "green"]
-        _states = ["left", "right"]
+        _states = ["left", "right", "frontback", "idle"]
         for c in _colors:
             for s in _states:
                 VisualRegistry.load_image(f"{c}_{s}", f"{c}_{s}.png")
+        VisualRegistry.load_image("dead", "dead.png")
 
     def _build_ordered_player_id_list(self):
         """所有 client 對 player_id_list 達成共識：按 server 指派的顏色順序排序，
@@ -261,6 +271,10 @@ class GameEngine:
         # 消費小遊戲啟動請求：在主執行緒安全地實例化並啟動遊戲
         if self._pending_minigame:
             game_name = self._pending_minigame
+            # 若尚未取得伺服器分配的顏色，延後啟動，防止 is_authority 判定錯誤
+            if self.network.player_color is None:
+                return
+
             self._pending_minigame = None
             game_cls = _MINIGAME_CLASSES.get(game_name)
             if game_cls:
@@ -317,6 +331,9 @@ class GameEngine:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
+                    # F11：切換全螢幕
+                    if event.key == pygame.K_F11:
+                        pygame.display.toggle_fullscreen()
                     if event.key == pygame.K_s and self._show_surrender_ui:
                         self.network.send_surrender()
 

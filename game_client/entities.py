@@ -4,7 +4,7 @@ import math
 
 from sync_helpers import RemoteSyncState, apply_server_update, tick_remote_sync
 
-PLAYER_SPEED = 200  # Ghost 預設移動速度（像素/秒），小遊戲可 import 此常數共用
+PLAYER_SPEED = 400  # Ghost 預設移動速度（像素/秒），小遊戲可 import 此常數共用
 
 class Entity:
     """
@@ -46,14 +46,15 @@ class Ghost(Entity):
     """
     def __init__(self, color_key="blue", avatar_size=24):
         self.direction = "right" # 當前朝向：left, right
-        super().__init__(640, 360, visual_key=f"{color_key}_{self.direction}")
+        super().__init__(960, 540, visual_key=f"{color_key}_{self.direction}")
         
         self.color_key = color_key  # 保存顏色鍵以供 visual_key 更新與 fallback 繪製使用
         self.avatar_size = avatar_size # 統一使用實體的半徑屬性
-        self.width = avatar_size * 2 + 4 # 同步碰撞箱寬度為直徑
-        self.height = avatar_size * 2 + 4  # 同步碰撞箱高度為直徑
+        self.width = avatar_size * 2    # 碰撞箱寬度 (直徑)
+        self.height = avatar_size * 2   # 碰撞箱高度 (直徑)
         self.speed = PLAYER_SPEED
-        self.state = "IDLE" # 基礎狀態機：IDLE, WALK, DEAD
+        self.is_alive = True            # 存活狀態
+        
         self.current_dx = 0  # 上一幀的原始輸入方向，供網路廣播使用
         self.current_dy = 0
 
@@ -71,17 +72,18 @@ class Ghost(Entity):
         """
         self.current_dx, self.current_dy = float(dx), float(dy)
 
-        # 根據水平輸入更新角色朝向（left/right），dx 為 0 時保持上一個方向
+        # 根據輸入更新狀態：優先左右，次之上下，無輸入則 idle
         if dx > 0:
             self.direction = "right"
         elif dx < 0:
             self.direction = "left"
-
-        if dx == 0 and dy == 0:
-            self.state = "IDLE"
-            # 靜止時 visual_key 對應 {color}_{direction}
-            self.visual_key = f"{self.color_key}_{self.direction}"
-            return
+        elif dy != 0:
+            self.direction = "frontback"
+        else:
+            self.direction = "idle"
+            
+        self.visual_key = f"{self.color_key}_{self.direction}"
+        if dx == 0 and dy == 0: return
 
         # 1. 斜向移動正規化：確保斜著走的速度與水平/垂直一致 (1.0x 而非 1.414x)
         nx, ny = dx, dy
@@ -142,56 +144,56 @@ class Ghost(Entity):
             new_y = self.y + math.copysign(move_dist_y, dy)
             if not check_collision(self.x, new_y): self.y = new_y
 
-        # 6. 全域邊界限制 (Boundary Clamp)：確保角色不論在任何模式都不會跑出 1280x720 視窗
-        self.x = max(self.avatar_size, min(1280 - self.avatar_size, self.x))
-        self.y = max(self.avatar_size, min(720 - self.avatar_size, self.y))
-
-        self.state = "WALK"
-        self.visual_key = f"{self.color_key}_{self.direction}"
+        # 6. 全域邊界限制 (Boundary Clamp)：確保角色不論在任何模式都不會跑出 1920x1080 視窗
+        self.x = max(self.avatar_size, min(1920 - self.avatar_size, self.x))
+        self.y = max(self.avatar_size, min(1080 - self.avatar_size, self.y))
 
     def update(self, dt):
         """
         處理物理更新與動畫影格切換。
         """
-        # 只有在行走狀態才進行影格切換計時
-        if self.state == "WALK":
-            self.animation_timer += dt
-            if self.animation_timer >= self.animation_speed:
-                self.animation_timer = 0
-                self.frame_index = (self.frame_index + 1) % 2
-        else:
-            # 靜止時固定在第 0 影格（通常是靜止影格）
-            self.frame_index = 0
-       
+        # 若死亡，強制切換為 dead 精靈圖
+        if not self.is_alive:
+            self.visual_key = "dead"
+
+        # 所有狀態（包含死亡時的 dead.png）皆執行動畫循環
+        self.animation_timer += dt
+        if self.animation_timer >= self.animation_speed:
+            self.animation_timer = 0
+            # 根據視覺資源決定影格數：left/right 為 3 欄，其餘 (包含 dead) 為 2 欄
+            cols = 3 if ("left" in self.visual_key or "right" in self.visual_key) else 2
+            self.frame_index = (self.frame_index + 1) % cols
 
     def get_sprite_rect(self, surface):
-        """1x2 切割：寬度不變，高度除以 2"""
+        """水平切割：高度不變，寬度除以欄數 (3 或 2)"""
         w, h = surface.get_size()
-        frame_h = h // 2
-        return pygame.Rect(0, self.frame_index * frame_h, w, frame_h)
+        cols = 3 if ("left" in self.visual_key or "right" in self.visual_key) else 2
+        frame_w = w // cols
+        # 修正：加上 % cols 確保切換方向時索引不會越界導致角色消失
+        return pygame.Rect((self.frame_index % cols) * frame_w, 0, frame_w, h)
 
 class RemoteGhost(Entity):
     """
     遠端玩家實體：透過 sync_helpers 套用 LERP + Dead Reckoning，平滑渲染遠端位置。
     """
     SPEED = PLAYER_SPEED  # 與 Ghost 相同，供 Dead Reckoning 預測位移使用
-    AVATAR_SIZE = 24
-    # 大廳場景邊界（畫面 1280x720 扣除頭像半徑）
-    _BOUNDS = (AVATAR_SIZE, AVATAR_SIZE, 1280 - AVATAR_SIZE, 720 - AVATAR_SIZE)
+    AVATAR_SIZE = 32
+    # 大廳場景邊界（畫面 1920x1080 扣除頭像半徑）
+    _BOUNDS = (AVATAR_SIZE, AVATAR_SIZE, 1920 - AVATAR_SIZE, 1080 - AVATAR_SIZE)
     _DR_TIMEOUT = 0.2  # 大廳對抖動容忍度較高，採用稍寬鬆的超時
 
-    def __init__(self, player_id, color_key="green"):
-        self.direction = "right"
-        super().__init__(640, 360, visual_key=f"{color_key}_{self.direction}")
+    def __init__(self, player_id, color_key="green", avatar_size=28):
+        self.direction = "idle"  # 修正為小寫，確保與 VisualRegistry 載入的 Key 匹配
+        super().__init__(960, 540, visual_key=f"{color_key}_{self.direction}")
         
-        self.avatar_size = self.AVATAR_SIZE  # 與 Ghost 保持一致的尺寸屬性名稱
-        self.width = self.avatar_size * 2    # 同步遠端玩家的碰撞箱寬度
-        self.height = self.avatar_size * 2   # 同步遠端玩家的碰撞箱高度
+        self.avatar_size = avatar_size  # 與 Ghost 保持一致的尺寸屬性名稱
+        self.width = self.avatar_size * 2
+        self.height = self.avatar_size * 2
         self.player_id = player_id
         self.color_key = color_key
-        self.sync = RemoteSyncState(target_x=640.0, target_y=360.0)
+        self.sync = RemoteSyncState(target_x=960.0, target_y=540.0)
         self.disconnected = False  # 隊友斷線標記，由 Engine 設定
-        self.state = "IDLE"
+        self.is_alive = True
         self.frame_index = 0
         self.animation_timer = 0.0
         self.animation_speed = 0.15
@@ -199,11 +201,14 @@ class RemoteGhost(Entity):
     def apply_server_update(self, x, y, dx, dy):
         """收到伺服器轉發的封包時，更新目標位置與速度方向，並切換動畫狀態。"""
         apply_server_update(self.sync, x, y, dx, dy)
-        self.state = "WALK" if (dx != 0 or dy != 0) else "IDLE"
         if dx > 0:
             self.direction = "right"
         elif dx < 0:
             self.direction = "left"
+        elif dy != 0:
+            self.direction = "frontback"
+        else:
+            self.direction = "idle"
 
         self.visual_key = f"{self.color_key}_{self.direction}"
 
@@ -212,17 +217,23 @@ class RemoteGhost(Entity):
         tick_remote_sync(self, self.sync, dt, self.SPEED,
                          bounds=self._BOUNDS, dr_timeout=self._DR_TIMEOUT)
         
-        # 更新遠端玩家動畫
+        # 若死亡，強制切換為 dead 精靈圖
+        if not self.is_alive:
+            self.visual_key = "dead"
+
+        # 更新遠端玩家動畫影格 (邏輯同 Ghost)
         self.animation_timer += dt
         if self.animation_timer >= self.animation_speed:
             self.animation_timer = 0
-            self.frame_index = (self.frame_index + 1) % 2
-
+            cols = 3 if ("left" in self.visual_key or "right" in self.visual_key) else 2
+            self.frame_index = (self.frame_index + 1) % cols
 
     def get_sprite_rect(self, surface):
         w, h = surface.get_size()
-        frame_h = h // 2
-        return pygame.Rect(0, self.frame_index * frame_h, w, frame_h)
+        cols = 3 if ("left" in self.visual_key or "right" in self.visual_key) else 2
+        frame_w = w // cols
+        # 修正：加上 % cols 確保切換方向時索引不會越界
+        return pygame.Rect((self.frame_index % cols) * frame_w, 0, frame_w, h)
 
 
 class StaticObject(Entity):
@@ -237,6 +248,20 @@ class StaticObject(Entity):
     def __init__(self, x, y, visual_key):
         super().__init__(x, y, visual_key)
         self.collidable = True # 是否具備碰撞功能
+
+class ColorButton(StaticObject):
+    """
+    身分驗證按鈕：僅特定顏色的玩家站在上面時會計時。
+    """
+    def __init__(self, x, y, color):
+        # 暫時不使用精靈圖，視覺由渲染器根據狀態動態繪製
+        super().__init__(x, y, visual_key=None)
+        self.assigned_color = color
+        self.charge_timer = 0.0
+        self.is_triggered = False
+        self.activated_time = 0  # 紀錄被點亮的精確時間 (ms)
+        self.width = 60  # 與地圖格子大小一致
+        self.height = 60
 
 class TestEntity(Entity):
     """
