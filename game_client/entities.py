@@ -4,7 +4,7 @@ import math
 
 from sync_helpers import RemoteSyncState, apply_server_update, tick_remote_sync
 
-PLAYER_SPEED = 200  # Ghost 預設移動速度（像素/秒），小遊戲可 import 此常數共用
+PLAYER_SPEED = 400  # Ghost 預設移動速度（像素/秒），小遊戲可 import 此常數共用
 
 class Entity:
     """
@@ -182,7 +182,7 @@ class RemoteGhost(Entity):
     _BOUNDS = (AVATAR_SIZE, AVATAR_SIZE, 1920 - AVATAR_SIZE, 1080 - AVATAR_SIZE)
     _DR_TIMEOUT = 0.2  # 大廳對抖動容忍度較高，採用稍寬鬆的超時
 
-    def __init__(self, player_id, color_key="green", avatar_size=24):
+    def __init__(self, player_id, color_key="green", avatar_size=28):
         self.direction = "idle"  # 修正為小寫，確保與 VisualRegistry 載入的 Key 匹配
         super().__init__(960, 540, visual_key=f"{color_key}_{self.direction}")
         
@@ -248,6 +248,20 @@ class StaticObject(Entity):
     def __init__(self, x, y, visual_key):
         super().__init__(x, y, visual_key)
         self.collidable = True # 是否具備碰撞功能
+
+class ColorButton(StaticObject):
+    """
+    身分驗證按鈕：僅特定顏色的玩家站在上面時會計時。
+    """
+    def __init__(self, x, y, color):
+        # 暫時不使用精靈圖，視覺由渲染器根據狀態動態繪製
+        super().__init__(x, y, visual_key=None)
+        self.assigned_color = color
+        self.charge_timer = 0.0
+        self.is_triggered = False
+        self.activated_time = 0  # 紀錄被點亮的精確時間 (ms)
+        self.width = 60  # 與地圖格子大小一致
+        self.height = 60
 
 class TestEntity(Entity):
     """
