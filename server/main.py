@@ -287,7 +287,7 @@ async def start_game(sid, data):
         # 隨機或固定選擇小遊戲；目前固定為 reverse_pacman
         await sio.emit(
             ServerEvent.START_MINIGAME,
-            {"game": "reverse_pacman"},
+            {"game": "dodge_knives"},
             room=room_id,
         )
 
@@ -384,7 +384,8 @@ def launch_game_client():
 
 def run_server():
     """在背景執行 Socket.IO ASGI server。"""
-    uvicorn.run(app, host="0.0.0.0", port=5000, log_level="error")
+    port = int(os.environ.get("PORT", 5000))
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="error")
 
 
 class LobbyAPI:

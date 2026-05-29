@@ -17,11 +17,20 @@ _TILE_COLORS = {
 # 玩家顏色 → RGB 從 constants.COLORS 對照表轉換而來，確保一致性。
 _PLAYER_COLORS = COLORS
 
+# 通關動畫時長常數 (需與 BaseLogicInterface 同步)
+CLEAR_PRE_PAUSE_TIME = 0.5  # 布條滑入前的空白停頓
+CLEAR_IN_TIME        = 0.6  # 白色布條滑入時間
+CLEAR_TEXT_PAUSE_TIME = 0.6  # 文字進場前的停頓時間
+CLEAR_TEXT_TIME      = 2.5  # 文字停留總時間 (含停頓、進場動畫與持續時間)
+CLEAR_TEXT_ANIM_TIME = 0.4  # 文字縮放與透明度漸變的持續時間
+CLEAR_OUT_TIME       = 0.6  # 布條帶著文字滑出時間
+
 class Renderer:
     def __init__(self, screen):
         self.screen = screen
         self.font = pygame.font.SysFont(None, 24)
         self.font_large = pygame.font.SysFont(None, 52)
+        self.font_clear = pygame.font.SysFont(None, 200, bold=True)
 
     def clear(self):
         """用背景色清空畫面"""
@@ -100,6 +109,7 @@ class Renderer:
         players  = render_data.get("players", {})
         pacman   = render_data.get("pacman", {})
         buttons  = render_data.get("buttons", [])
+        clear_anim = render_data.get("clear_anim", {"stage": 0, "timer": 0.0})
 
         rows = len(tile_map)
         cols = len(tile_map[0]) if rows > 0 else 0
@@ -212,6 +222,7 @@ class Renderer:
                         self.screen, 
                         color_rgb, 
                         (bx - size // 2 + 2, by + size // 2 - 2 - prog_h, size - 4, prog_h),
+                        border_radius=6
                     )
 
         # 2. 繪製玩家（依 Y 座標從上到下，避免重疊遮擋問題）
@@ -274,6 +285,88 @@ class Renderer:
         hud = self.font.render(f"Pellets: {pellets_left}", True, (200, 200, 200))
         sw, sh = self.screen.get_size()
         self.screen.blit(hud, (sw - hud.get_width() - 20, sh - hud.get_height() - 20))
+
+        # 5. 通關過場動畫 (Clear Animation Overlay)
+        self._draw_clear_overlay(clear_anim)
+
+    def _draw_clear_overlay(self, anim):
+        stage = anim.get("stage", 0)
+        if stage == 0 or stage == 5:
+            return
+
+        sw, sh = self.screen.get_size()
+        timer = anim.get("timer", 0.0)
+        
+        banner_color = (250, 250, 250)
+        text_color = (255, 50, 50)
+        
+        banner_x = 0
+        banner_w = sw
+
+        # 準備文字 Surface (200px 粗體)
+        text_str = "C L E A R !"
+        base_text_surf = self.font_clear.render(text_str, True, text_color)
+        current_alpha = 255
+        current_scale = 1.0
+        text_offset_x = 0
+
+        if stage == 1:  # Pre Pause: 通關瞬間的空白停頓 (不畫任何東西)
+            banner_w = 0
+            current_alpha = 0
+
+        elif stage == 2:  # Slide In: 從左滑向右
+            progress = min(1.0, timer / CLEAR_IN_TIME)
+            # Ease Out: 1 - (1-x)^2
+            ease_prog = 1 - (1 - progress) ** 2
+            banner_w = sw * ease_prog
+            banner_x = 0
+            current_alpha = 0 # 進入階段暫不顯示文字
+        
+        elif stage == 3:  # Show Text: 縮放進場與停留
+            banner_x = 0
+            banner_w = sw
+
+            if timer < CLEAR_TEXT_PAUSE_TIME:
+                # 第一階段：停頓期 (文字隱藏)
+                current_alpha = 0
+                current_scale = 2.0
+            elif timer < (CLEAR_TEXT_PAUSE_TIME + CLEAR_TEXT_ANIM_TIME):
+                # 第二階段：縮放進場動畫
+                anim_timer = timer - CLEAR_TEXT_PAUSE_TIME
+                anim_prog = anim_timer / CLEAR_TEXT_ANIM_TIME
+                current_scale = 2.0 - 1.0 * anim_prog
+                current_alpha = int(255 * anim_prog)
+            else:
+                # 第三階段：穩定停留期
+                current_scale = 1.0
+                current_alpha = 255
+
+        elif stage == 4:  # Slide Out: 帶著文字向右收走
+            progress = min(1.0, timer / CLEAR_OUT_TIME)
+            # Ease In: x^2
+            ease_prog = progress ** 2
+            banner_x = sw * ease_prog
+            banner_w = sw - banner_x
+            text_offset_x = banner_x
+            current_alpha = 255
+
+        # 繪製布條
+        if banner_w > 0:
+            bh = 300
+            pygame.draw.rect(self.screen, banner_color, (banner_x, (sh - bh) // 2, banner_w, bh))
+
+        # 繪製文字
+        if stage >= 3:
+            # 縮放處理
+            if current_scale != 1.0:
+                w, h = base_text_surf.get_size()
+                draw_surf = pygame.transform.smoothscale(base_text_surf, (int(w * current_scale), int(h * current_scale)))
+            else:
+                draw_surf = base_text_surf
+            
+            draw_surf.set_alpha(current_alpha)
+            text_rect = draw_surf.get_rect(center=(sw // 2 + text_offset_x, sh // 2))
+            self.screen.blit(draw_surf, text_rect)
 
     def display(self):
         """將繪製內容更新到螢幕上"""

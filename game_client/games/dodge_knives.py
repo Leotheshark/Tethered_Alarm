@@ -4,7 +4,6 @@ Dodge Knives 小遊戲邏輯模組。
 基於 Reverse Pac-Man 的地圖與實體框架實作：
 - 玩家在迷宮中移動並躲避隨機生成的飛刀。
 - 保留了按鈕開啟閘門的機制，可用於切換逃生路徑。
-- 被飛刀擊中後需隊友在原地按 E 救援。
 """
 
 import json
@@ -54,10 +53,10 @@ AVATAR_SIZE = 24
 BUTTON_HOLD_TIME = 2.5  # 玩家需要踩在按鈕上的總秒數
 
 SPAWN_TILES = {
-    "blue":  (1, 1),
-    "green": (15, 30),
-    "pink":  (1, 30),
-    "red":   (15, 1),
+    "blue":  (3, 3),
+    "green": (13, 28),
+    "pink":  (3, 28),
+    "red":   (13, 3),
 }
 
 # 按鈕位置與顏色配置
@@ -155,10 +154,15 @@ class DodgeKnives(BaseLogicInterface):
             self._input_dy = event_data.get("dy", 0)
 
     def update(self, dt: float):
-        if not self.is_active or self._cleared: return
+        if not self.is_active: return
+
+        # 更新通關動畫計時器
+        self._update_clear_animation(dt)
+        if self.is_cleared():
+            return
 
         local = self.players.get(self.local_color)
-        if local and local.is_alive:
+        if local and local.is_alive and not self.is_input_locked:
             # 收集其他玩家的碰撞矩形（包含倒地者），使其成為物理障礙
             other_rects = [p.rect for c, p in self.players.items() if c != self.local_color]
             local.move(self._input_dx, self._input_dy, dt, TILE_SIZE, 
@@ -179,8 +183,8 @@ class DodgeKnives(BaseLogicInterface):
             
             if on_button:
                 btn.charge_timer = min(BUTTON_HOLD_TIME, btn.charge_timer + dt)
-                # 只有授權端負責判定「完成」並廣播給所有人
-                if self.is_authority and btn.charge_timer >= BUTTON_HOLD_TIME:
+                # 只有授權端負責判定「完成」
+                if self.is_authority and not btn.is_triggered and btn.charge_timer >= BUTTON_HOLD_TIME:
                         btn.is_triggered = True
                         btn.activated_time = pygame.time.get_ticks()
                         self.socket_client.send_game_event({
@@ -189,6 +193,11 @@ class DodgeKnives(BaseLogicInterface):
             else:
                 # 沒人踩時進度條緩慢後退
                 btn.charge_timer = max(0.0, btn.charge_timer - dt * 2)
+
+        # 檢查是否所有按鈕都點亮 (僅在非動畫期間觸發)
+        if self.clear_anim_stage == 0:
+            if all(b.is_triggered for b in self.buttons):
+                self.trigger_clear_sequence()
 
         # 遠端同步
         map_bounds = (AVATAR_SIZE, AVATAR_SIZE, COLS * TILE_SIZE - AVATAR_SIZE, ROWS * TILE_SIZE - AVATAR_SIZE)
@@ -200,6 +209,7 @@ class DodgeKnives(BaseLogicInterface):
         return {
             "tile_map": self.tile_map,
             "tile_size": TILE_SIZE,
+            "clear_anim": self._get_clear_anim_data(),
             "buttons": [
                 {
                     "x": b.x, "y": b.y, 
