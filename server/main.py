@@ -3,6 +3,7 @@ import asyncio
 import os
 import subprocess
 import sys
+import socket
 import threading
 import time
 from datetime import datetime, timedelta
@@ -32,6 +33,7 @@ class ServerState:
         self.bgm_path = os.path.join(base_dir, "..", "game_client", "assets", "sounds", "bgm_loop.ogg")
         self.alarm_sound_path = os.path.join(base_dir, "..", "game_client", "assets", "sounds", "Alarm_1.ogg")
         self.alarm_test_sound = None
+        self.alarm_real_sound = None
         
         # 初始化音訊引擎
         pygame.mixer.init()
@@ -46,6 +48,21 @@ class ServerState:
     def stop_lobby_bgm(self):
         """停止背景音樂"""
         pygame.mixer.music.stop()
+
+    def play_actual_alarm(self):
+        """播放真正的鬧鐘響鈴（循環播放）"""
+        try:
+            if not self.alarm_real_sound and os.path.exists(self.alarm_sound_path):
+                self.alarm_real_sound = pygame.mixer.Sound(self.alarm_sound_path)
+            if self.alarm_real_sound:
+                self.alarm_real_sound.play(loops=-1)  # -1 代表無限循環
+        except Exception as e:
+            print(f"[server] failed to play alarm: {e}")
+
+    def stop_actual_alarm(self):
+        """停止鬧鐘響鈴"""
+        if self.alarm_real_sound:
+            self.alarm_real_sound.stop()
 
     def resume_lobby_bgm(self):
         """恢復背景音樂 (用於測試音量後)"""
@@ -97,10 +114,6 @@ async def connect(sid, environ):
     is_speaker = await asyncio.to_thread(SystemHelper.get_is_speaker)
     await sio.emit(ServerEvent.HARDWARE_STATUS, {"is_speaker": is_speaker}, to=sid)
 
-    # 玩家連線時，由後端直接啟動音效播放
-    state.play_lobby_bgm()
-
-
 @sio.event
 async def disconnect(sid):
     """玩家或 game_client 離線時清理房間狀態並觸發斷線流程。"""
@@ -109,13 +122,14 @@ async def disconnect(sid):
     # 處理 lobby 玩家斷線
     for room_id, room in list(state.rooms.items()):
         if sid in room.players:
-            room.remove_player(sid)
-            if not room.players:
+            if room.host_sid == sid:
+                # 房主退出，直接關閉房間並通知剩餘玩家
+                print(f"[room] host disconnected, closing room: {room_id}")
+                await sio.emit(ServerEvent.ERROR_MSG, {"message": "Host disconnected. Room closed."}, room=room_id)
                 state.rooms.pop(room_id)
                 continue
-            if room.host_sid == sid:
-                room.host_sid = next(iter(room.players))
-                print(f"[room] host changed: {room.host_sid}")
+            
+            room.remove_player(sid)
             await sio.emit(ServerEvent.ROOM_STATE, room.get_state(), room=room_id)
 
     # 處理 game_client 斷線：廣播通知並啟動 60 秒倒數
@@ -227,10 +241,9 @@ async def alarm_monitor():
                 diff = (alarm_dt - now).total_seconds()
                 min_diff = min(min_diff, diff)
 
-                if -30 < diff <= 1:
+                if -30 < diff <= 59: # TODO: 記得改回來
                     print(f"[alarm] trigger room {room_id} at {room.alarm_time}")
                     await sio.emit(ServerEvent.ALARM_TRIGGERED, {"time": room.alarm_time}, room=room_id)
-                    await asyncio.to_thread(SystemHelper.set_webview_topmost) # 鬧鐘響起時將視窗置頂
                     room.alarm_time = None
             except Exception as e:
                 print(f"[alarm] invalid alarm in room {room_id}: {e}")
@@ -258,7 +271,6 @@ async def set_alarm(sid, data):
     if room.host_sid == sid and len(room.players) == room.max_players:
         room.alarm_time = time_str
         state.alarm_updated_event.set()
-        state.stop_lobby_bgm()  # 鬧鐘設定完成後停止大廳音樂
         await sio.emit(ServerEvent.ALARM_SET, {"time": time_str}, room=room_id)
     else:
         reason = "Need four players before setting alarm" if len(room.players) < room.max_players else "Only host can set alarm"
@@ -287,9 +299,18 @@ async def start_game(sid, data):
         # 隨機或固定選擇小遊戲；目前固定為 reverse_pacman
         await sio.emit(
             ServerEvent.START_MINIGAME,
-            {"game": "dodge_knives"},
+            {"game": "reverse_pacman"},
             room=room_id,
         )
+
+@sio.event
+async def game_cleared(sid, data):
+    """小遊戲通關時，由 game_client 通知伺服器。"""
+    room_id = data.get("room_id")
+    if room_id:
+        print(f"[server] game cleared in {room_id}")
+        # 廣播給房間所有人（包含大廳），理由為成功
+        await sio.emit(ServerEvent.GAME_OVER, {"reason": "success"}, room=room_id)
 
 
 @sio.event
@@ -333,9 +354,11 @@ async def subscribe_game_room(sid, data):
 
     await sio.enter_room(sid, room_id)
 
-    # 依訂閱順序指派顏色，讓每個 game_client 有唯一的角色顏色
-    color = state.colors[room.game_client_count % len(state.colors)]
-    room.game_client_count += 1
+    # 優先使用客戶端申報的顏色（來自大廳繼承），若無則使用計數器（相容除錯模式）
+    color = data.get("player_color")
+    if not color:
+        color = state.colors[room.game_client_count % len(state.colors)]
+        room.game_client_count += 1
 
     room.game_client_sids[sid] = color
 
@@ -363,29 +386,35 @@ async def surrender(sid, data):
 
 
 # --- 啟動與視窗管理 ---
-def launch_game_client():
-    """自動啟動 game_client/main.py；可用 AUTO_START_GAME_CLIENT=0 關閉。"""
-    auto_start = os.environ.get("AUTO_START_GAME_CLIENT", "1")
-    if auto_start == "0":
-        print("[server] auto-start game client disabled")
-        return
-
+def launch_game_client(room_id="default", server_url="http://127.0.0.1:5555", color="blue"):
+    """啟動 game_client/main.py，並注入連線資訊與角色顏色。"""
     game_client_script = os.path.normpath(os.path.join(base_dir, "..", "game_client", "main.py"))
     if not os.path.exists(game_client_script):
         print("[server] game_client/main.py not found")
         return
 
     try:
-        print(f"[server] launching game client: {game_client_script}")
-        subprocess.Popen([sys.executable, game_client_script], cwd=os.path.dirname(game_client_script))
+        # 建立環境變數，讓 Pygame 進程繼承大廳的連線設定
+        env = os.environ.copy()
+        env["ROOM_ID"] = room_id
+        env["SERVER_URL"] = server_url
+        env["PLAYER_COLOR"] = color
+        # 強制 Pygame 啟動後立即顯示視窗
+        env["FORCE_START"] = "1"
+
+        print(f"[server] launching game client for {color} in room {room_id}")
+        subprocess.Popen(
+            [sys.executable, game_client_script], 
+            cwd=os.path.dirname(game_client_script),
+            env=env
+        )
     except Exception as e:
         print(f"[server] failed to launch game client: {e}")
 
 
 def run_server():
     """在背景執行 Socket.IO ASGI server。"""
-    port = int(os.environ.get("PORT", 5000))
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="error")
+    uvicorn.run(app, host="0.0.0.0", port=5555, log_level="error")
 
 
 class LobbyAPI:
@@ -394,12 +423,64 @@ class LobbyAPI:
         if webview.windows:
             webview.windows[0].destroy()
 
+    def minimize_lobby(self):
+        """縮小大廳視窗。"""
+        if webview.windows:
+            webview.windows[0].minimize()
+
+    def restore_lobby(self):
+        """恢復大廳視窗。"""
+        if webview.windows:
+            webview.windows[0].restore()
+
+    def trigger_topmost(self):
+        """鬧鐘響起時，由前端呼叫此 API 將本地視窗置頂。"""
+        SystemHelper.set_webview_topmost()
+
+    def launch_game_instance(self, room_id, server_url, color):
+        """由前端通知啟動遊戲執行個體，並帶入目前大廳的連線參數。"""
+        launch_game_client(room_id, server_url, color)
+
+    def start_bgm(self):
+        """由前端通知播放本地背景音樂。"""
+        state.play_lobby_bgm()
+
+    def stop_bgm(self):
+        """由前端通知停止本地背景音樂。"""
+        state.stop_lobby_bgm()
+
+    def start_alarm_sound(self):
+        """由前端通知播放本地鬧鐘音效。"""
+        state.play_actual_alarm()
+
+    def stop_alarm_sound(self):
+        """由前端通知停止本地鬧鐘音效。"""
+        state.stop_actual_alarm()
+
+    def get_tailscale_ip(self):
+        """偵測並回傳本機的 Tailscale IP (100.x.y.z)。"""
+        try:
+            # 獲取本機主機名稱與所有關聯 IP
+            hostname = socket.gethostname()
+            ips = socket.gethostbyname_ex(hostname)[2]
+            # 篩選出 Tailscale 專用的 100.x.y.z 網段
+            for ip in ips:
+                if ip.startswith("100."):
+                    return ip
+        except Exception as e:
+            print(f"[server] Failed to detect Tailscale IP: {e}")
+        return "127.0.0.1"
+
 
 def start_window():
     """開啟 pywebview lobby 視窗，並掛載 LobbyAPI 供 JS 呼叫。"""
+    # 根據環境變數決定 UI 載入位址，若無則預設為本地伺服器
+    # 這允許 Guest 實例直接載入 Host 的頁面，避免單機測試時的連接埠衝突
+    target_url = os.environ.get("SERVER_URL", "http://127.0.0.1:5555")
+
     webview.create_window(
         "Tethered Alarm",
-        "http://127.0.0.1:5000",
+        target_url,
         width=1000,
         height=700,
         resizable=False,
@@ -409,13 +490,18 @@ def start_window():
 
 
 if __name__ == "__main__":
+    # 1. 系統準備：防止休眠
     SystemHelper.prevent_sleep()
 
-    server_thread = threading.Thread(target=run_server, daemon=True)
-    server_thread.start()
+    # 2. 啟動伺服器邏輯 (僅在未設定 SKIP_SERVER 時執行)
+    # 在單機多人測試 (debug_overall.py) 中，只有 Host 會啟動此線程
+    if os.environ.get("SKIP_SERVER") != "1":
+        print(f"[server] Starting Uvicorn on port 5555...")
+        server_thread = threading.Thread(target=run_server, daemon=True)
+        server_thread.start()
 
-    time.sleep(1)
-    launch_game_client()
+        # 關鍵：給予 Uvicorn 一點時間完成初始化，避免 Webview 載入時伺服器尚未就緒
+        time.sleep(1.0)
 
     print("[server] opening lobby window...")
     start_window()

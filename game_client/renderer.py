@@ -18,19 +18,19 @@ _TILE_COLORS = {
 _PLAYER_COLORS = COLORS
 
 # 通關動畫時長常數 (需與 BaseLogicInterface 同步)
-CLEAR_PRE_PAUSE_TIME = 0.5  # 布條滑入前的空白停頓
-CLEAR_IN_TIME        = 0.6  # 白色布條滑入時間
-CLEAR_TEXT_PAUSE_TIME = 0.6  # 文字進場前的停頓時間
-CLEAR_TEXT_TIME      = 2.5  # 文字停留總時間 (含停頓、進場動畫與持續時間)
-CLEAR_TEXT_ANIM_TIME = 0.4  # 文字縮放與透明度漸變的持續時間
-CLEAR_OUT_TIME       = 0.6  # 布條帶著文字滑出時間
+CLEAR_PRE_PAUSE_TIME = 1.0  # 布條滑入前的空白停頓
+CLEAR_IN_TIME        = 0.3  # 白色布條滑入時間
+CLEAR_TEXT_PAUSE_TIME = 0.4  # 文字進場前的停頓時間
+CLEAR_TEXT_TIME      = 1.5  # 文字停留總時間 (含停頓、進場動畫與持續時間)
+CLEAR_TEXT_ANIM_TIME = 0.3  # 文字縮放與透明度漸變的持續時間
+CLEAR_OUT_TIME       = 0.3  # 布條帶著文字滑出時間
 
 class Renderer:
     def __init__(self, screen):
         self.screen = screen
         self.font = pygame.font.SysFont(None, 24)
         self.font_large = pygame.font.SysFont(None, 52)
-        self.font_clear = pygame.font.SysFont(None, 200, bold=True)
+        self.font_clear = pygame.font.SysFont(None, 300, bold=True)
 
     def clear(self):
         """用背景色清空畫面"""
@@ -303,7 +303,7 @@ class Renderer:
         banner_x = 0
         banner_w = sw
 
-        # 準備文字 Surface (200px 粗體)
+        # 準備文字 Surface (300px 粗體)
         text_str = "C L E A R !"
         base_text_surf = self.font_clear.render(text_str, True, text_color)
         current_alpha = 255
@@ -329,12 +329,12 @@ class Renderer:
             if timer < CLEAR_TEXT_PAUSE_TIME:
                 # 第一階段：停頓期 (文字隱藏)
                 current_alpha = 0
-                current_scale = 2.0
+                current_scale = 2.5
             elif timer < (CLEAR_TEXT_PAUSE_TIME + CLEAR_TEXT_ANIM_TIME):
                 # 第二階段：縮放進場動畫
                 anim_timer = timer - CLEAR_TEXT_PAUSE_TIME
                 anim_prog = anim_timer / CLEAR_TEXT_ANIM_TIME
-                current_scale = 2.0 - 1.0 * anim_prog
+                current_scale = 2.5 - 1.5 * anim_prog
                 current_alpha = int(255 * anim_prog)
             else:
                 # 第三階段：穩定停留期

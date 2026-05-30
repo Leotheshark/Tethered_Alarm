@@ -38,13 +38,6 @@ for _finder, _module_name, _ispkg in pkgutil.iter_modules([_games_pkg_path]):
     except Exception as _e:
         print(f"[Engine] failed to load games.{_module_name}: {_e}")
 
-# 將 server 目錄加入搜尋路徑，以便匯入 SystemHelper
-server_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "server"))
-if server_dir not in sys.path:
-    sys.path.append(server_dir)
-
-from system_helper import SystemHelper  # type: ignore
-
 class GameEngine:
     def __init__(self):
         # 0. 解決 Windows 高 DPI 縮放問題，確保 1920x1080 視窗不會被系統自動放大
@@ -82,6 +75,9 @@ class GameEngine:
         self._pending_play_alarm = False
         self._pending_remote_updates = []  # 遠端位置封包佇列（背景執行緒寫入，主迴圈消費）
 
+        # 優先讀取環境變數中的顏色（由 Lobby 傳入），否則預設藍色
+        initial_color = os.environ.get('PLAYER_COLOR', 'blue')
+
         # 遠端玩家管理
         self.remote_ghosts = {}   # { player_id: RemoteGhost }
         self._sync_timer = 0.0    # 位置廣播計時器
@@ -100,9 +96,9 @@ class GameEngine:
         self._game_sync_timer = 0.0        # 玩家位置同步至小遊戲的計時器
         self._GAME_SYNC_INTERVAL = 0.05    # 每 50ms 廣播一次小遊戲玩家位置
 
-        # DEBUG_MODE=1：跳過大廳流程，直接開啟遊戲視窗，方便單人測試
-        if os.environ.get('DEBUG_MODE') == '1':
-            print("[Engine] DEBUG_MODE: 跳過大廳，直接開啟遊戲視窗")
+        # 處理強制啟動邏輯：解決大廳啟動遊戲時錯過 game_started 事件的問題
+        if os.environ.get('DEBUG_MODE') == '1' or os.environ.get('FORCE_START') == '1':
+            print("[Engine] 啟動即進入遊戲視窗")
             self._pending_show_window = True
 
         # DEBUG_MINIGAME=1：跳過 server 廣播，等湊滿人數後啟動指定的小遊戲
@@ -116,10 +112,10 @@ class GameEngine:
         # 2.7. 建立網路客戶端，連接到伺服器並監聽 alarm/game 事件
         # room id 可由環境變數 ROOM_ID 覆蓋，否則使用預設 "default"
         room_id = os.environ.get('ROOM_ID', 'default')
-        self.network = GameNetwork(self, server_url=os.environ.get('SERVER_URL', 'http://127.0.0.1:5000'), room_id=room_id)
+        self.network = GameNetwork(self, server_url=os.environ.get('SERVER_URL', 'http://127.0.0.1:5555'), room_id=room_id, player_color=initial_color)
 
         # 3. 建立玩家角色
-        self.player = Ghost("blue")
+        self.player = Ghost(initial_color)
         self.entity_manager.add(self.player)
 
     def on_color_assigned(self, color):
@@ -147,6 +143,9 @@ class GameEngine:
     def on_start_minigame(self, data):
         """伺服器通知要載入哪個小遊戲（背景執行緒）。"""
         self._pending_minigame = data.get("game")
+        game_name = data.get("game")
+        print(f"[Debug] 收到小遊戲啟動通知: {game_name}")
+        self._pending_minigame = game_name
 
     def on_game_event(self, data):
         """接收小遊戲即時事件（背景執行緒）。"""
@@ -206,6 +205,8 @@ class GameEngine:
         # 本地玩家
         if self.network.player_id:
             entries.append((self.player.color_key, self.network.player_id))
+        else:
+            print("[Debug] 建立名單失敗: network.player_id 為空")
         # 遠端玩家
         for pid, ghost in self.remote_ghosts.items():
             entries.append((ghost.color_key, pid))
@@ -369,7 +370,8 @@ class GameEngine:
                     self.active_game.on_exit()
                     self.active_game = None
                     print("[Engine] minigame cleared!")
-                    # TODO: 廣播通關訊息，回到大廳流程
+                    # 廣播通關訊息給伺服器，讓大廳視窗恢復
+                    self.network.sio.emit("game_cleared", {"room_id": self.network.room_id})
             else:
                 # 遊戲大廳/等待模式：使用一般角色移動
                 # 大廳中收集所有遠端玩家的 rect

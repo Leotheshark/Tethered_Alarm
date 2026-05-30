@@ -9,9 +9,9 @@
 // --- 語系設定 (i18n) ---
 const translations = {
     zh: {
-        room_id_label: '房間 ID',
-        invite_btn: '複製邀請連結',
-        invite_success: '邀請連結已複製到剪貼簿！',
+        room_id_label: '主機 IP',
+        invite_btn: '複製主機 IP',
+        invite_success: '主機 IP 已複製到剪貼簿！',
         room_prompt: '請輸入房間 ID 以建立或加入房間：',
         host_prompt: '你是房長，請輸入鬧鐘設定時間 (例如 08:30):',
         game_starting: '遊戲即將開始',
@@ -27,12 +27,17 @@ const translations = {
         speaker_warning: '⚠️ 偵測到耳機輸出，請切換至喇叭以免睡過頭！',
         you: '你',
         test_volume: '測試音量',
-        playing: '播放中...'
+        playing: '播放中...',
+        menu_create: '創建房間',
+        menu_join: '加入房間',
+        menu_connect: '連線',
+        menu_back: '返回',
+        ip_placeholder: '輸入好友的 Tailscale IP'
     },
     en: {
-        room_id_label: 'ROOM ID',
-        invite_btn: 'Copy Invite Link',
-        invite_success: 'Invite link copied to clipboard!',
+        room_id_label: 'IP',
+        invite_btn: 'Copy Host IP',
+        invite_success: 'Host IP copied to clipboard!',
         room_prompt: 'Enter Room ID to create or join:',
         host_prompt: 'You are Host, enter alarm time (e.g., 08:30):',
         game_starting: 'GAME STARTING IN',
@@ -48,7 +53,12 @@ const translations = {
         speaker_warning: '⚠️ Headset detected! Switch to speakers to avoid oversleeping.',
         you: 'You',
         test_volume: 'Test Volume',
-        playing: 'Playing...'
+        playing: 'Playing...',
+        menu_create: 'Create Room',
+        menu_join: 'Join Room',
+        menu_connect: 'Connect',
+        menu_back: 'Back',
+        ip_placeholder: 'Enter Host Tailscale IP'
     }
 };
 
@@ -68,11 +78,25 @@ const textSleeping = document.getElementById('text-sleeping');
 const roomFullText = document.getElementById('text-room-full');
 const tryAnotherRoomButton = document.getElementById('btn-try-another-room');
 const testVolButton = document.getElementById('btn-test-volume');
+const langBtn = document.getElementById('btn-toggle-language'); // 宣告語言切換按鈕變數，避免 ReferenceError
 const urlParams = new URLSearchParams(window.location.search);
+
+// 主選單元素
+const mainMenuOverlay = document.getElementById('main-menu-overlay');
+const btnCreateRoom = document.getElementById('btn-create-room');
+const btnShowJoinPanel = document.getElementById('btn-show-join-panel');
+const menuJoinPanel = document.getElementById('menu-join-panel');
+const menuInitialButtons = document.getElementById('menu-initial-buttons');
+const inputServerIp = document.getElementById('input-server-ip');
+const btnConfirmJoin = document.getElementById('btn-confirm-join');
+const btnBackToMenu = document.getElementById('btn-back-to-menu');
+
 let ROOM_ID = urlParams.get('room');
 let socketManager = null;
 let lastIsSpeaker = true; // 紀錄最後一次收到的硬體狀態
 let isTestingVolume = false; // 紀錄是否正在測試音量
+let myColor = 'blue'; // 紀錄伺服器指派給我的顏色
+let isLaunchingGame = false; // 避免重複啟動遊戲進程的旗標
 
 function updateLanguage() {
     // 根據 currentLang 更新頁面文字，支援中文和英文
@@ -87,11 +111,26 @@ function updateLanguage() {
     roomFullText.textContent = t.room_full_message;
     tryAnotherRoomButton.textContent = t.try_another_room;
     document.getElementById('alarm-hint').textContent = t.alarm_hint;
+
+    // 主選單文字
+    if (btnCreateRoom) btnCreateRoom.textContent = t.menu_create;
+    if (btnShowJoinPanel) btnShowJoinPanel.textContent = t.menu_join;
+    if (btnConfirmJoin) btnConfirmJoin.textContent = t.menu_connect;
+    if (btnBackToMenu) btnBackToMenu.textContent = t.menu_back;
+    if (inputServerIp) inputServerIp.placeholder = t.ip_placeholder;
+
     if (testVolButton) testVolButton.textContent = isTestingVolume ? t.playing : t.test_volume;
     
     // 更新「你」的標籤
     document.querySelectorAll('.me-arrow span').forEach(el => el.textContent = t.you);
     
+    // 更新語言切換按鈕文字，並根據目前語言將標籤標註為紅色 (lang-active)
+    if (langBtn) {
+        const zhLabel = currentLang === 'zh' ? '<span class="lang-active">中文</span>' : '中文';
+        const enLabel = currentLang === 'en' ? '<span class="lang-active">English</span>' : 'English';
+        langBtn.innerHTML = `${enLabel} / ${zhLabel}`;
+    }
+
     // 更新硬體警告文字
     updateHardwareWarningUI();
 }
@@ -133,6 +172,11 @@ class SocketManager {
 
             if (this.uiCallbacks.onConnect) {
                 this.uiCallbacks.onConnect(this.socket.id);
+            }
+            
+            // 連線成功後，通知本地 Python 播放大廳背景音樂
+            if (window.pywebview && window.pywebview.api.start_bgm) {
+                window.pywebview.api.start_bgm();
             }
         });
 
@@ -245,8 +289,6 @@ const uiCallbacks = {
     },
     onConnect: () => {},
     onRoomStateUpdate: (state, currentSocketId) => {
-        const colors = ["blue", "green", "pink", "red"];
-
         document.querySelectorAll('.character-circle').forEach(el => {
             el.style.opacity = '0.2';
         });
@@ -263,7 +305,7 @@ const uiCallbacks = {
         const sids = Object.keys(state.players);
         sids.forEach((sid, index) => {
             const player = state.players[sid];
-            const color = colors[index];
+            const color = player.color; // 使用伺服器端指派的顏色
             const slot = document.getElementById(`slot-${color}`);
             if (slot) {
                 slot.querySelector('.character-circle').style.opacity = '1.0';
@@ -272,6 +314,7 @@ const uiCallbacks = {
                 }
                 if (sid === currentSocketId) {
                     slot.querySelector('.me-arrow').style.visibility = 'visible';
+                    myColor = color; // 更新本地紀錄的顏色
                 }
                 if (sid === state.host_sid) {
                     slot.querySelector('.host-crown').style.visibility = 'visible';
@@ -308,7 +351,10 @@ const uiCallbacks = {
             if (count <= 0) {
                 clearInterval(timer);
                 num.textContent = 'GO!';
-                socketManager.sendStartGame();
+                // 重要：只有房長負責發送開始指令，避免所有人同時觸發 Server 廣播
+                if (socketManager.isHost()) {
+                    socketManager.sendStartGame();
+                }
             } else {
                 num.textContent = count;
             }
@@ -319,6 +365,11 @@ const uiCallbacks = {
         const t = translations[currentLang];
         document.getElementById('display-set-alarm-time').textContent = `${t.alarm_time_prefix}${data.time}`;
         console.log('鬧鐘已設定，進入睡眠模式...');
+
+        // 進入睡眠模式，停止背景音樂
+        if (window.pywebview && window.pywebview.api.stop_bgm) {
+            window.pywebview.api.stop_bgm();
+        }
     },
     onAlarmTriggered: (data) => {
         document.getElementById('sleep-overlay').style.display = 'none';
@@ -327,19 +378,54 @@ const uiCallbacks = {
         const alarmHint = document.getElementById('alarm-hint');
         alarmHint.style.visibility = 'hidden';
         alarmHint.dataset.triggered = 'true';
+
+        // 通知本地 Python 將此視窗置頂並播放鬧鐘聲音
+        if (window.pywebview) {
+            if (window.pywebview.api.trigger_topmost) window.pywebview.api.trigger_topmost();
+            if (window.pywebview.api.start_alarm_sound) window.pywebview.api.start_alarm_sound();
+        }
     },
     onJoinFailed: data => {
         if (data.reason === 'full') {
             document.getElementById('room-full-overlay').style.display = 'flex';
         }
     },
+    onGameOver: (data) => {
+        console.log(`遊戲結束，原因: ${data.reason}`);
+        isLaunchingGame = false; // 重置啟動旗標，允許下一次遊戲
+        // 當遊戲結束（成功或投降），恢復大廳視窗
+        if (window.pywebview && window.pywebview.api.restore_lobby) {
+            window.pywebview.api.restore_lobby();
+        }
+        // 重置大廳狀態與 UI 標記
+        document.getElementById('alarm-hint').dataset.triggered = 'false';
+        readyButton.disabled = false;
+        readyButton.style.opacity = '1.0';
+        readyButton.style.cursor = 'pointer';
+        readyButton.classList.remove('active');
+    },
     onGameStarted: () => {
         document.getElementById('countdown-overlay').style.display = 'none';
         console.log('伺服器確認：遊戲正式開始！');
-        // 透過 pywebview JS API 關閉 lobby 視窗（window.close() 在 pywebview 無效）
+
+        // 防護：若本機已經啟動過遊戲進程，則忽略重複的廣播
+        if (isLaunchingGame) return;
+        isLaunchingGame = true;
+
+        // 正式進入遊戲前，停止鬧鐘聲音
+        if (window.pywebview && window.pywebview.api.stop_alarm_sound) {
+            window.pywebview.api.stop_alarm_sound();
+        }
+
+        // 通知本地 Python 啟動遊戲並傳遞連線資訊
+        if (window.pywebview && window.pywebview.api.launch_game_instance) {
+            window.pywebview.api.launch_game_instance(ROOM_ID, window.location.origin, myColor);
+        }
+
         setTimeout(() => {
+            // 進入遊戲後不關閉大廳，改為縮小以便維持伺服器運作
             if (window.pywebview) {
-                window.pywebview.api.close_lobby();
+                window.pywebview.api.minimize_lobby();
             }
         }, 300);
     }
@@ -426,7 +512,7 @@ cancelTimeBtn.onclick = hideTimePicker;
 // 綁定大廳主要按鈕事件
 if (readyButton) readyButton.onclick = sendReady;
 if (inviteButton) inviteButton.onclick = copyInviteLink;
-const langBtn = document.getElementById('btn-toggle-language');
+
 if (langBtn) langBtn.onclick = toggleLanguage;
 
 if (testVolButton) {
@@ -438,22 +524,28 @@ if (testVolButton) {
 // 程式啟動入口：要求房間 ID，顯示房間資訊，並建立 SocketManager
 // 程式啟動入口：如果沒有 room 參數，提示使用者輸入；然後建立 socket 連線
 function startApp() {
-    // 避免使用 while 導致 prompt 被阻擋時進入死迴圈
-    if (!ROOM_ID || !ROOM_ID.trim()) {
-        try {
-            ROOM_ID = prompt(translations[currentLang].room_prompt, 'room-' + Math.floor(Math.random() * 1000));
-        } catch (e) {
-            console.warn("Prompt is not supported in this environment or was cancelled.");
-        }
-        // 如果 prompt 失敗或被取消，給予預設 ID
-        if (!ROOM_ID || !ROOM_ID.trim()) {
-            ROOM_ID = 'room-' + Math.floor(Math.random() * 1000);
-            console.log("Using default room ID:", ROOM_ID);
-        }
+    // 如果網址已經帶有 room 參數 (例如來自邀請連結)，直接進入房間
+    if (ROOM_ID && ROOM_ID.trim()) {
+        connectToRoom(window.location.origin, ROOM_ID);
+    } else {
+        // 否則顯示主選單
+        mainMenuOverlay.style.display = 'flex';
     }
+    
+    updateClock();
+    setInterval(updateClock, 1000);
+}
 
+function connectToRoom(serverUrl, roomId) {
+    console.log(`正在連線至 ${serverUrl} 房間: ${roomId}`);
+    ROOM_ID = roomId;
     document.getElementById('displayRoomId').textContent = ROOM_ID;
-    socketManager = new SocketManager(window.location.origin, ROOM_ID, uiCallbacks);
+    mainMenuOverlay.style.display = 'none';
+    
+    // 建立 Socket 連線
+    socketManager = new SocketManager(serverUrl, ROOM_ID, uiCallbacks);
+
+    // 綁定鬧鐘點擊事件
     if (alarmClock) { // 增加檢查，避免 alarmClock 為 null
         alarmClock.onclick = () => {
             if (socketManager?.isHost() && alarmClock.style.cursor === 'pointer') {
@@ -463,6 +555,39 @@ function startApp() {
     }
 }
 
+// --- 主選單事件綁定 ---
+btnCreateRoom.onclick = async () => {
+    // 創建房間：向 Python 請求本機 Tailscale IP 作為房間 ID
+    let hostIp = "127.0.0.1";
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.get_tailscale_ip) {
+        // 呼叫後端偵測 IP 的功能
+        hostIp = await window.pywebview.api.get_tailscale_ip();
+    }
+    
+    // 將房間 ID 設為偵測到的 IP，並連線至本地伺服器
+    connectToRoom(window.location.origin, hostIp);
+};
+
+btnShowJoinPanel.onclick = () => {
+    // 切換至 IP 輸入介面
+    menuInitialButtons.style.display = 'none';
+    menuJoinPanel.style.display = 'block';
+};
+
+btnBackToMenu.onclick = () => {
+    // 返回主選單
+    menuJoinPanel.style.display = 'none';
+    menuInitialButtons.style.display = 'block';
+};
+
+btnConfirmJoin.onclick = () => {
+    const ip = inputServerIp.value.trim();
+    if (ip) {
+        // 使用玩家輸入的 IP 連線，並將該 IP 同步設為房間 ID
+        connectToRoom(`http://${ip}:5555`, ip);
+    }
+};
+
 // 使用者按 READY 時觸發，將準備狀態送到後端
 function sendReady() {
     if (!socketManager) return;
@@ -471,8 +596,8 @@ function sendReady() {
 }
 
 function copyInviteLink() {
-    const url = `${window.location.origin}${window.location.pathname}?room=${ROOM_ID}`;
-    navigator.clipboard.writeText(url).then(() => alert(translations[currentLang].invite_success));
+    // 配合 Tailscale 連線，按鈕改為 Copy Host IP，因此改為直接複製 ROOM_ID (即 IP 位址)
+    navigator.clipboard.writeText(ROOM_ID).then(() => alert(translations[currentLang].invite_success));
 }
 
 function hideRoomFullOverlay() {
@@ -485,6 +610,4 @@ tryAnotherRoomButton.onclick = () => {
 };
 
 updateLanguage();
-updateClock();
-setInterval(updateClock, 1000);
 startApp();
