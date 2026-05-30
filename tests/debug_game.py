@@ -22,6 +22,8 @@ def main():
     parser.add_argument("--no-server", action="store_true", help="不要自動啟動 server")
     parser.add_argument("--room", default="debug", help="ROOM_ID")
     parser.add_argument("--windowed", action="store_true", help="使用視窗模式 (預設為全螢幕)")
+    parser.add_argument("--map", default=None,
+                        help="要載入的地圖 maps/<name>.json（不含副檔名）；不指定則用遊戲預設 level_default")
     args = parser.parse_args()
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -62,6 +64,9 @@ def main():
         env["DEBUG_PLAYERS"] = str(n)  # 湊滿 n 人才啟動小遊戲
         env["ROOM_ID"] = args.room
         env["SERVER_URL"] = "http://127.0.0.1:5000"
+        # 指定地圖時，明確覆寫 MAP_NAME（會蓋掉外部殘留的同名環境變數）
+        if args.map:
+            env["MAP_NAME"] = args.map
         print(f"[debug] 啟動 client {i + 1} 於 {positions[i]}")
         procs.append(subprocess.Popen([sys.executable, game_client], env=env))
         time.sleep(0.5)  # 錯開連線，避免顏色指派競爭

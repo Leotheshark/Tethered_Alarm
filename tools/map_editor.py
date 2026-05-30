@@ -11,7 +11,7 @@ Reverse Pac-Man 關卡編輯器。
 - 左側工具列點選磚片或出生點工具
 - 點擊地圖格子套用工具
 - 配對工具：依序點 button 與 gate 建立配對
-- Ctrl+S 儲存；Ctrl+Z 復原；Ctrl+N 新關卡（清空）
+- Ctrl+S 儲存（存回目前檔名）；F2 另存新檔（輸入新名稱 → 產生新檔，不動原檔）；Ctrl+Z 復原；Ctrl+N 新關卡（清空）
 
 輸出檔位於 repo_root/maps/<name>.json，可直接被 reverse_pacman.py 載入。
 """
@@ -29,17 +29,20 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 MAPS_DIR  = os.path.abspath(os.path.join(_THIS_DIR, "..", "maps"))
 
 # 磚片字元 ↔ 顏色 / 顯示文字。與 reverse_pacman.py 的 _CHAR_TO_TILE 對齊。
+# 註：pellet(P) 已從玩法移除，編輯器不再提供 P 筆刷（載入舊圖時 P 會被遊戲視為空地）。
 TILES = [
     ("W", "Wall",   (40, 40, 110)),
     (".", "Empty",  (200, 200, 200)),
-    ("P", "Pellet", (255, 240, 180)),
     ("G", "Gate",   (180, 60, 60)),
     ("B", "Button", (60, 180, 60)),
     ("S", "Spike",  (180, 100, 40)),
+    ("F", "Fog",    (120, 90, 160)),
 ]
 TILE_CHARS = {t[0] for t in TILES}
 
 SPAWN_KEYS = ["blue", "green", "pink", "red", "pacman"]
+# 蓄能站：每色一個專屬點（玩家在此長按 E 蓄能）；顏色沿用 SPAWN_COLORS。
+STATION_KEYS = ["blue", "green", "pink", "red"]
 SPAWN_COLORS = {
     "blue":   (80, 140, 255),
     "green":  (80, 220, 120),
@@ -76,7 +79,7 @@ def empty_map(rows=18, cols=32):
             tiles.append("W" + "." * (cols - 2) + "W")
     return {
         "name": "untitled",
-        "tile_size": 40,
+        "tile_size": 60,
         "rows": rows,
         "cols": cols,
         "tiles": tiles,
@@ -87,12 +90,31 @@ def empty_map(rows=18, cols=32):
             "red":    [rows - 2, 1],
             "pacman": [rows // 2, cols // 2],
         },
+        "charge_stations": {
+            "blue":   [rows // 2 - 2, cols // 2 - 4],
+            "green":  [rows // 2 + 2, cols // 2 + 4],
+            "pink":   [rows // 2 - 2, cols // 2 + 4],
+            "red":    [rows // 2 + 2, cols // 2 - 4],
+        },
         "button_gate_map": [],
     }
 
 
+def _ensure_schema(data):
+    """補齊舊地圖可能缺少的欄位（charge_stations），避免 KeyError。"""
+    defaults = empty_map(data.get("rows", 18), data.get("cols", 32))["charge_stations"]
+    data.setdefault("charge_stations", {})
+    for k in STATION_KEYS:
+        data["charge_stations"].setdefault(k, defaults[k])
+    return data
+
+
 def load_map_file(name):
-    """從 maps/<name>.json 載入，找不到時回傳空關卡。"""
+    """從 maps/<name>.json 載入，找不到時回傳空關卡。
+
+    一律把 data["name"] 對齊傳入的檔名，確保「開哪個檔就存哪個檔」，
+    避免複製地圖後因 name 欄位殘留而 Ctrl+S 誤蓋到別張圖。
+    """
     path = os.path.join(MAPS_DIR, f"{name}.json")
     if not os.path.isfile(path):
         print(f"[Editor] {path} not found, starting from empty map")
@@ -101,8 +123,9 @@ def load_map_file(name):
         return data
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
+    data["name"] = name  # 對齊檔名，避免存檔時誤蓋到別張圖
     print(f"[Editor] loaded {path}")
-    return data
+    return _ensure_schema(data)
 
 
 def save_map_file(data):
@@ -113,6 +136,9 @@ def save_map_file(data):
     tile_lines = ",\n    ".join(json.dumps(row) for row in data["tiles"])
     spawn_lines = ",\n    ".join(
         f'"{k}": {json.dumps(data["spawns"][k])}' for k in SPAWN_KEYS
+    )
+    station_lines = ",\n    ".join(
+        f'"{k}": {json.dumps(data["charge_stations"][k])}' for k in STATION_KEYS
     )
     pair_lines = ",\n    ".join(
         json.dumps(entry, ensure_ascii=False) for entry in data["button_gate_map"]
@@ -125,6 +151,7 @@ def save_map_file(data):
         f'  "cols": {data["cols"]},\n'
         f'  "tiles": [\n    {tile_lines}\n  ],\n'
         f'  "spawns": {{\n    {spawn_lines}\n  }},\n'
+        f'  "charge_stations": {{\n    {station_lines}\n  }},\n'
         f'  "button_gate_map": [\n    {pair_lines}\n  ]\n'
         "}\n"
     )
@@ -134,27 +161,27 @@ def save_map_file(data):
 
 
 def validate(data):
-    """回傳警告字串列表（不擋存檔），用於 status bar 即時顯示。"""
+    """回傳 (警告列表, 迷霧數, 按鈕數, 閘門數)，用於 status bar 即時顯示（不擋存檔）。"""
     warnings = []
     tiles = data["tiles"]
-    # pellet 數量
-    pellet_count = sum(row.count("P") for row in tiles)
-    if pellet_count == 0:
-        warnings.append("no pellets")
+    fog_count = sum(row.count("F") for row in tiles)
     # button / gate 數量配對檢查
     btn_count = sum(row.count("B") for row in tiles)
     gate_count = sum(row.count("G") for row in tiles)
     pair_count = len(data["button_gate_map"])
     if pair_count != btn_count or pair_count != gate_count:
         warnings.append(f"B={btn_count} G={gate_count} pairs={pair_count}")
-    # 出生點不能在牆上
-    for k, (r, c) in data["spawns"].items():
+    # 出生點與蓄能站都不能在牆上 / 出界
+    checks = list(data["spawns"].items()) + [
+        (f"{k} station", v) for k, v in data.get("charge_stations", {}).items()
+    ]
+    for k, (r, c) in checks:
         if 0 <= r < data["rows"] and 0 <= c < data["cols"]:
             if tiles[r][c] == "W":
-                warnings.append(f"{k} spawn on wall")
+                warnings.append(f"{k} on wall")
         else:
-            warnings.append(f"{k} spawn out of bounds")
-    return warnings, pellet_count, btn_count, gate_count
+            warnings.append(f"{k} out of bounds")
+    return warnings, fog_count, btn_count, gate_count
 
 
 # ─── 編輯器主體 ───────────────────────────────────────────────────────────────
@@ -170,6 +197,9 @@ class MapEditor:
         self.tool = ("tile", "W")
         # 配對工具暫存：記住已點的第一格（button 或 gate）
         self._pending_pair = None
+        # 另存新檔（F2）的命名模式狀態
+        self._naming = False
+        self._name_buffer = ""
 
         # Pygame 物件
         pygame.init()
@@ -231,6 +261,11 @@ class MapEditor:
             self.push_history()
             self.data["spawns"][value] = [row, col]
 
+        elif kind == "station":
+            # 把指定顏色的蓄能站移到該格
+            self.push_history()
+            self.data.setdefault("charge_stations", {})[value] = [row, col]
+
         elif kind == "pair":
             self._handle_pair_click(row, col)
 
@@ -284,12 +319,17 @@ class MapEditor:
         self._draw_map()
         self._draw_pairs()
         self._draw_spawns()
+        self._draw_stations()
         self._draw_status_bar()
+        if self._naming:
+            self._draw_naming_prompt()
         pygame.display.flip()
 
     def _draw_sidebar(self):
         x = 10
         y = 10
+        # 每幀重建「可點擊區 → 工具」命中表，供 _handle_sidebar_click 使用（避免硬寫像素偏移）
+        self._sidebar_hits = []
         title = self.font_large.render("Map Editor", True, (240, 240, 240))
         self.screen.blit(title, (x, y))
         y += 36
@@ -299,46 +339,59 @@ class MapEditor:
         y += 22
         for char, label, color in TILES:
             rect = pygame.Rect(x, y, SIDEBAR_W - 30, 26)
-            selected = self.tool == ("tile", char)
             pygame.draw.rect(self.screen, color, rect)
-            if selected:
+            if self.tool == ("tile", char):
                 pygame.draw.rect(self.screen, (255, 255, 255), rect, 3)
-            text_color = (20, 20, 20) if char in (".", "P") else (240, 240, 240)
+            text_color = (20, 20, 20) if char == "." else (240, 240, 240)
             self.screen.blit(self.font.render(f"{char}  {label}", True, text_color),
                              (x + 6, y + 5))
+            self._sidebar_hits.append((rect, ("tile", char)))
             y += 30
 
         # 出生點工具
         y += 8
-        self.screen.blit(self.font.render("Spawns (click → place):", True, (180, 180, 180)), (x, y))
+        self.screen.blit(self.font.render("Spawns (click -> place):", True, (180, 180, 180)), (x, y))
         y += 22
         for key in SPAWN_KEYS:
             rect = pygame.Rect(x, y, SIDEBAR_W - 30, 22)
-            selected = self.tool == ("spawn", key)
             pygame.draw.rect(self.screen, SPAWN_COLORS[key], rect)
-            if selected:
+            if self.tool == ("spawn", key):
                 pygame.draw.rect(self.screen, (255, 255, 255), rect, 3)
-            self.screen.blit(self.font.render(key, True, (20, 20, 20)),
-                             (x + 6, y + 3))
+            self.screen.blit(self.font.render(key, True, (20, 20, 20)), (x + 6, y + 3))
+            self._sidebar_hits.append((rect, ("spawn", key)))
+            y += 26
+
+        # 蓄能站工具
+        y += 8
+        self.screen.blit(self.font.render("Charge stations:", True, (180, 180, 180)), (x, y))
+        y += 22
+        for key in STATION_KEYS:
+            rect = pygame.Rect(x, y, SIDEBAR_W - 30, 22)
+            pygame.draw.rect(self.screen, SPAWN_COLORS[key], rect)
+            if self.tool == ("station", key):
+                pygame.draw.rect(self.screen, (255, 255, 255), rect, 3)
+            self.screen.blit(self.font.render(f"{key} station", True, (20, 20, 20)), (x + 6, y + 3))
+            self._sidebar_hits.append((rect, ("station", key)))
             y += 26
 
         # 配對工具
         y += 8
         rect = pygame.Rect(x, y, SIDEBAR_W - 30, 26)
-        selected = self.tool[0] == "pair"
         pygame.draw.rect(self.screen, (120, 90, 160), rect)
-        if selected:
+        if self.tool[0] == "pair":
             pygame.draw.rect(self.screen, (255, 255, 255), rect, 3)
-        self.screen.blit(self.font.render("Pair (B↔G)", True, (240, 240, 240)),
-                         (x + 6, y + 5))
+        self.screen.blit(self.font.render("Pair (B<->G)", True, (240, 240, 240)), (x + 6, y + 5))
+        self._sidebar_hits.append((rect, ("pair", None)))
         y += 38
 
-        # 動作按鈕
+        # 動作說明（鍵盤快捷鍵）
         self.screen.blit(self.font.render("[Ctrl+S] Save", True, (220, 220, 220)), (x, y))
         y += 20
         self.screen.blit(self.font.render("[Ctrl+Z] Undo", True, (220, 220, 220)), (x, y))
         y += 20
         self.screen.blit(self.font.render("[Ctrl+N] New",  True, (220, 220, 220)), (x, y))
+        y += 20
+        self.screen.blit(self.font.render("[F2] Save As", True, (220, 220, 220)), (x, y))
         y += 20
         self.screen.blit(self.font_small.render(f"File: {self.data['name']}.json",
                                                 True, (160, 160, 160)), (x, y))
@@ -353,13 +406,10 @@ class MapEditor:
                                    self.map_origin_y + r * cs, cs, cs)
                 pygame.draw.rect(self.screen, color, rect)
                 pygame.draw.rect(self.screen, (50, 50, 60), rect, 1)
-                # 標記字
-                if char in ("B", "G", "S"):
+                # 標記字（B/G/S/F 在格中央標字母）
+                if char in ("B", "G", "S", "F"):
                     label = self.font_small.render(char, True, (20, 20, 20))
                     self.screen.blit(label, (rect.x + cs // 2 - 4, rect.y + cs // 2 - 6))
-                elif char == "P":
-                    pygame.draw.circle(self.screen, (200, 150, 40),
-                                       rect.center, max(2, cs // 6))
 
     def _draw_pairs(self):
         """畫 button ↔ gate 的虛線連線，4 對輪流套不同顏色。"""
@@ -410,19 +460,38 @@ class MapEditor:
             label = self.font_small.render(key[0].upper(), True, (20, 20, 20))
             self.screen.blit(label, (cx - 4, cy - 6))
 
+    def _draw_stations(self):
+        """以彩色空心環 + 'C' 標籤畫出 4 個蓄能站（與出生點的實心圓區隔）。"""
+        cs = self.cell_size
+        for key in STATION_KEYS:
+            station = self.data.get("charge_stations", {}).get(key)
+            if not station:
+                continue
+            r, c = station
+            color = SPAWN_COLORS[key]
+            cx = self.map_origin_x + c * cs + cs // 2
+            cy = self.map_origin_y + r * cs + cs // 2
+            rad = max(5, cs // 3)
+            pygame.draw.circle(self.screen, color, (cx, cy), rad, 3)        # 空心環
+            pygame.draw.circle(self.screen, (20, 20, 20), (cx, cy), rad, 1)
+            label = self.font_small.render("C", True, color)
+            self.screen.blit(label, (cx - 4, cy - 6))
+
     def _draw_status_bar(self):
-        warnings, pellets, btns, gates = validate(self.data)
+        warnings, fogs, btns, gates = validate(self.data)
         y = WINDOW_H - 60
         pygame.draw.rect(self.screen, (20, 20, 30),
                          (0, y, WINDOW_W, 60))
-        info = f"Pellets: {pellets}  |  Buttons: {btns}  |  Gates: {gates}  |  Pairs: {len(self.data['button_gate_map'])}"
+        info = (f"Fog: {fogs}  |  Buttons: {btns}  |  Gates: {gates}  |  "
+                f"Pairs: {len(self.data['button_gate_map'])}  |  "
+                f"Stations: {len(self.data.get('charge_stations', {}))}")
         self.screen.blit(self.font.render(info, True, (220, 220, 220)), (12, y + 8))
 
         if warnings:
-            warn_text = "  ".join(f"⚠ {w}" for w in warnings)
+            warn_text = "  ".join(f"! {w}" for w in warnings)
             color = (255, 180, 80)
         else:
-            warn_text = "✓ map valid"
+            warn_text = "OK  map valid"
             color = (140, 220, 140)
         self.screen.blit(self.font.render(warn_text, True, color), (12, y + 32))
 
@@ -434,10 +503,20 @@ class MapEditor:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+                    continue
 
-                elif event.type == pygame.KEYDOWN:
+                # 命名模式（F2 另存新檔）優先攔截所有按鍵，避免打字觸發快捷鍵
+                if self._naming:
+                    self._handle_naming_key(event)
+                    continue
+
+                if event.type == pygame.KEYDOWN:
                     mods = pygame.key.get_mods()
-                    if event.key == pygame.K_s and (mods & pygame.KMOD_CTRL):
+                    if event.key == pygame.K_F2:
+                        # 進入「另存新檔」：預填目前名稱，可改成新名稱另存成新檔
+                        self._naming = True
+                        self._name_buffer = self.data["name"]
+                    elif event.key == pygame.K_s and (mods & pygame.KMOD_CTRL):
                         save_map_file(self.data)
                     elif event.key == pygame.K_z and (mods & pygame.KMOD_CTRL):
                         self.undo()
@@ -470,6 +549,52 @@ class MapEditor:
 
         pygame.quit()
 
+    def _handle_naming_key(self, event):
+        """另存新檔（F2）命名模式的按鍵處理：打字 → Enter 存成新檔 / Esc 取消。"""
+        if event.type != pygame.KEYDOWN:
+            return
+        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            new_name = self._sanitize_name(self._name_buffer)
+            if new_name:
+                self.data["name"] = new_name
+                save_map_file(self.data)   # 存成 maps/<new_name>.json（新檔，不動原檔）
+                pygame.display.set_caption(f"Map Editor - {new_name}")
+            self._naming = False
+        elif event.key == pygame.K_ESCAPE:
+            self._naming = False  # 取消，不存檔
+        elif event.key == pygame.K_BACKSPACE:
+            self._name_buffer = self._name_buffer[:-1]
+        else:
+            ch = getattr(event, "unicode", "")
+            # 只收安全的檔名字元：英數、底線、減號
+            if ch and (ch.isalnum() or ch in "_-"):
+                self._name_buffer += ch
+
+    @staticmethod
+    def _sanitize_name(name):
+        """過濾成安全檔名（只留英數 / 底線 / 減號），避免奇怪字元或路徑符號。"""
+        return "".join(c for c in name.strip() if c.isalnum() or c in "_-")
+
+    def _draw_naming_prompt(self):
+        """命名模式時，畫一個置中的「另存新檔」輸入框。"""
+        w, h = 540, 130
+        x = (WINDOW_W - w) // 2
+        y = (WINDOW_H - h) // 2
+        pygame.draw.rect(self.screen, (20, 20, 35), (x, y, w, h))
+        pygame.draw.rect(self.screen, (200, 200, 220), (x, y, w, h), 2)
+        title = self.font_large.render("Save As (new file)", True, (240, 240, 240))
+        self.screen.blit(title, (x + 16, y + 12))
+        # 輸入框 + 目前輸入內容（加底線游標）
+        box = pygame.Rect(x + 16, y + 54, w - 32, 32)
+        pygame.draw.rect(self.screen, (40, 40, 60), box)
+        pygame.draw.rect(self.screen, (160, 160, 200), box, 1)
+        shown = self._sanitize_name(self._name_buffer)
+        self.screen.blit(self.font.render(f"{shown}_.json", True, (255, 255, 255)),
+                         (box.x + 8, box.y + 7))
+        hint = self.font_small.render("Enter = save new file    Esc = cancel    (a-z  0-9  _  -)",
+                                      True, (170, 170, 170))
+        self.screen.blit(hint, (x + 16, y + 96))
+
     def _handle_click(self, mx, my):
         # 1. 工具列點擊
         if mx < SIDEBAR_W:
@@ -481,29 +606,12 @@ class MapEditor:
             self.apply_tool_at(*grid)
 
     def _handle_sidebar_click(self, mx, my):
-        """根據 y 座標換算點到哪個工具按鈕。順序需與 _draw_sidebar 一致。"""
-        # _draw_sidebar 的版面：title(46) + "Tiles:"(22) + 6×30 + spacer(8) +
-        #                       "Spawns:"(22) + 5×26 + spacer(8) + pair(38)
-        y = my
-        TITLE_END   = 46
-        TILES_START = TITLE_END + 22
-        SPAWNS_HDR  = TILES_START + 6 * 30 + 8
-        SPAWNS_START = SPAWNS_HDR + 22
-        PAIR_BTN    = SPAWNS_START + 5 * 26 + 8
-
-        if TILES_START <= y < TILES_START + 6 * 30:
-            idx = (y - TILES_START) // 30
-            if 0 <= idx < len(TILES):
-                self.tool = ("tile", TILES[idx][0])
+        """用 _draw_sidebar 每幀建立的命中表，判定點到哪個工具按鈕。"""
+        for rect, tool in getattr(self, "_sidebar_hits", []):
+            if rect.collidepoint(mx, my):
+                self.tool = tool
                 self._pending_pair = None
-        elif SPAWNS_START <= y < SPAWNS_START + 5 * 26:
-            idx = (y - SPAWNS_START) // 26
-            if 0 <= idx < len(SPAWN_KEYS):
-                self.tool = ("spawn", SPAWN_KEYS[idx])
-                self._pending_pair = None
-        elif PAIR_BTN <= y < PAIR_BTN + 26:
-            self.tool = ("pair", None)
-            self._pending_pair = None
+                return
 
 
 def main():

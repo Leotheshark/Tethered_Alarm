@@ -8,10 +8,11 @@ from constants import COLORS
 _TILE_COLORS = {
     0: (0, 0, 100),       # W 牆壁：深藍色
     1: (255, 230, 210),   # E 空地：背景色
-    2: (255, 230, 210),   # P pellet：空地底色（pellet 另外畫圓點）
+    2: (255, 230, 210),   # P（已廢棄，地圖載入時轉為空地；保留色避免舊地圖殘留索引出錯）
     3: (180, 60, 60),     # G 閘門（關閉）：紅色
     4: (60, 180, 60),     # B 按鈕：綠色
     5: (180, 100, 40),    # S 釘板：橘棕色
+    6: (120, 90, 160),    # F 迷霧陷阱：紫灰色
 }
 
 # 玩家顏色 → RGB 從 constants.COLORS 對照表轉換而來，確保一致性。
@@ -98,7 +99,7 @@ class Renderer:
         tile_size = render_data.get("tile_size", 40)
         tile_colors = render_data.get("tile_colors", _TILE_COLORS)
         players  = render_data.get("players", {})
-        pacman   = render_data.get("pacman", {})
+        pacmen   = render_data.get("pacmen", [])
         buttons  = render_data.get("buttons", [])
 
         rows = len(tile_map)
@@ -140,17 +141,17 @@ class Renderer:
                 color = tile_colors.get(tile, _TILE_COLORS[2])
                 pygame.draw.rect(self.screen, color, (tx, ty, tile_size, tile_size))
 
-                # 磚片細節：pellet 畫白色小圓點，按鈕畫亮綠正方形，釘板畫斜線
-                if tile == 2:  # P
-                    cx = tx + tile_size // 2
-                    cy = ty + tile_size // 2
-                    pygame.draw.circle(self.screen, (0, 255 , 255), (cx, cy), 4)
-                elif tile == 4:  # B 按鈕：中央畫小方塊提示
+                # 磚片細節：按鈕畫亮綠正方形，迷霧陷阱畫霧點提示
+                if tile == 4:  # B 按鈕：中央畫小方塊提示
                     inner = 10
                     pygame.draw.rect(
                         self.screen, (120, 255, 120),
                         (tx + inner, ty + inner, tile_size - inner * 2, tile_size - inner * 2)
                     )
+                elif tile == 6:  # F 迷霧陷阱：畫幾個霧點提示腳下有陷阱
+                    cy = ty + tile_size // 2
+                    for off in (-12, 0, 12):
+                        pygame.draw.circle(self.screen, (180, 160, 210), (tx + tile_size // 2 + off, cy), 4)
 
         # 1.5. 繪製互動按鈕 (原生 Pygame 繪圖實作發光)
         for btn in buttons:
@@ -220,60 +221,116 @@ class Renderer:
             px = int(pdata.get("x", 0)) - ox
             py = int(pdata.get("y", 0)) - oy
             is_alive = pdata.get("is_alive", True)
-            perm_down = pdata.get("permanently_down", False)
             rescue_prog = pdata.get("rescue_progress", 0.0)
+            rescue_count = pdata.get("rescue_count", 0)
             rgb = _PLAYER_COLORS.get(color, (200, 200, 200))
             radius = pdata.get("avatar_size", 28) # 預設為 32，配合 64x64px 角色
 
-            if perm_down:
-                # 永久倒地：灰色 X 符號
-                pygame.draw.line(self.screen, (80, 80, 80), (px - 12, py - 12), (px + 12, py + 12), 3)
-                pygame.draw.line(self.screen, (80, 80, 80), (px + 12, py - 12), (px - 12, py + 12), 3)
+            # 一律嘗試繪製精靈圖（已無永久倒地的灰 X；倒地者也照常畫，另疊上救援弧線）
+            vkey = pdata.get("visual_key")
+            surface = VisualRegistry.get_surface(vkey) if vkey else None
+            if surface:
+                # 同步水平切割邏輯：left/right 3 欄，其餘 2 欄
+                cols = 3 if (vkey and ("left" in vkey or "right" in vkey)) else 2
+                # 修正：加上 % cols 確保索引安全，防止角色在切換狀態時瞬間消失
+                frame_idx = pdata.get("frame_index", 0) % cols
+                w, h = surface.get_size()
+                frame_w = w // cols
+                area = pygame.Rect(frame_idx * frame_w, 0, frame_w, h)
+                self.screen.blit(surface, (px - frame_w // 2, py - h // 2), area)
             else:
-                # 正常狀態或暫時倒地：優先嘗試繪製精靈圖
-                vkey = pdata.get("visual_key")
-                surface = VisualRegistry.get_surface(vkey) if vkey else None
-                if surface:
-                    # 同步水平切割邏輯：left/right 3 欄，其餘 2 欄
-                    cols = 3 if (vkey and ("left" in vkey or "right" in vkey)) else 2
-                    # 修正：加上 % cols 確保索引安全，防止角色在切換狀態時瞬間消失
-                    frame_idx = pdata.get("frame_index", 0) % cols
-                    w, h = surface.get_size()
-                    frame_w = w // cols
-                    area = pygame.Rect(frame_idx * frame_w, 0, frame_w, h)
-                    self.screen.blit(surface, (px - frame_w // 2, py - h // 2), area)
-                else:
-                    # 資源未載入時的備援：繪製填色圓形
-                    pygame.draw.circle(self.screen, rgb, (px, py), radius)
+                # 資源未載入時的備援：繪製填色圓形
+                pygame.draw.circle(self.screen, rgb, (px, py), radius)
 
-                # 暫時倒地時繪製救援進度弧線
-                if not is_alive and rescue_prog > 0:
-                    pygame.draw.circle(self.screen, (80, 80, 80), (px, py), radius + 2, 3) # 繪製外圈
-                    frac = min(rescue_prog / 2.0, 1.0)  # RESCUE_HOLD_TIME=2.0
-                    end_angle = -math.pi / 2 + frac * 2 * math.pi
-                    pygame.draw.arc(
-                        self.screen, (255, 220, 50),
-                        (px - radius - 4, py - radius - 4, (radius + 4) * 2, (radius + 4) * 2), # 弧線的繪製範圍
-                        -math.pi / 2, end_angle, 4
-                    )
-                
-                # 狀態疊加：不論是圓形或精靈圖，都疊加緩速環
-                if pdata.get("debuff") or pdata.get("spike"):
-                    pygame.draw.circle(self.screen, (200, 100, 255), (px, py), radius + 2, 2)
+            # 暫時倒地時繪製救援進度弧線
+            if not is_alive and rescue_prog > 0:
+                pygame.draw.circle(self.screen, (80, 80, 80), (px, py), radius + 2, 3) # 繪製外圈
+                frac = min(rescue_prog / 2.0, 1.0)  # RESCUE_HOLD_TIME=2.0
+                end_angle = -math.pi / 2 + frac * 2 * math.pi
+                pygame.draw.arc(
+                    self.screen, (255, 220, 50),
+                    (px - radius - 4, py - radius - 4, (radius + 4) * 2, (radius + 4) * 2), # 弧線的繪製範圍
+                    -math.pi / 2, end_angle, 4
+                )
 
-        # 3. 繪製 Pac-Man（黃色圓形）
-        if pacman:
-            pmx = int(pacman.get("x", 0)) - ox
-            pmy = int(pacman.get("y", 0)) - oy
-            pm_radius = pacman.get("avatar_size", 15)
+            # 減速指示：踩釘板或已被救過（rescue_count>0）→ 疊紫色緩速環
+            if pdata.get("spike") or rescue_count > 0:
+                pygame.draw.circle(self.screen, (200, 100, 255), (px, py), radius + 2, 2)
+            # rescue_count 用紅色小圓點顯示「被救過幾次 / 有多慢」
+            for i in range(rescue_count):
+                pygame.draw.circle(self.screen, (255, 80, 80), (px - 12 + i * 8, py - radius - 12), 3)
+
+        # 3. 繪製所有 Pac-Man（黃色圓形；數量會隨時間複製增加）
+        for pm in pacmen:
+            pmx = int(pm.get("x", 0)) - ox
+            pmy = int(pm.get("y", 0)) - oy
+            pm_radius = pm.get("avatar_size", 15)
             pygame.draw.circle(self.screen, (255, 220, 0), (pmx, pmy), pm_radius)
             pygame.draw.circle(self.screen, (200, 160, 0), (pmx, pmy), pm_radius, 2)
 
-        # 4. HUD：剩餘 pellet 數量
-        pellets_left = render_data.get("pellets_left", 0)
-        hud = self.font.render(f"Pellets: {pellets_left}", True, (200, 200, 200))
+        # 3.5. 致盲迷霧：本地玩家踩到迷霧時，蓋暗幕並在其周圍留一個清晰圓
+        if render_data.get("fog_active"):
+            self._draw_fog(render_data, players, local_color, ox, oy)
+
+        # 4. HUD：四色蓄能進度條 + 隊伍總進度（取代原本的剩餘 pellet 數）
+        self._draw_charge_hud(render_data)
+
+    def _draw_fog(self, render_data, players, local_color, ox, oy):
+        """
+        致盲迷霧：以半透明暗幕蓋住整個畫面，只在本地玩家周圍留一個帶柔邊的清晰圓。
+        清晰圓中心採用本地玩家的「螢幕座標」實算（相機在地圖邊緣會夾邊，玩家未必置中）。
+        """
         sw, sh = self.screen.get_size()
-        self.screen.blit(hud, (sw - hud.get_width() - 20, sh - hud.get_height() - 20))
+        radius = render_data.get("fog_radius", 150)
+
+        local_p = players.get(local_color)
+        if local_p:
+            cx = int(local_p.get("x", 0)) - ox
+            cy = int(local_p.get("y", 0)) - oy
+        else:
+            cx, cy = sw // 2, sh // 2
+
+        overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        # 完全不透明的黑幕：圓外「完全看不見」，視野只剩角色周圍一圈（而非單純變暗）
+        overlay.fill((0, 0, 0, 255))
+        # 由大到小畫多層遞減 alpha 的圓（pygame.draw 直接覆寫像素，非混色），
+        # 在角色周圍挖出一個帶柔邊的透明洞：洞內全亮、邊緣漸暗、洞外純黑。
+        for alpha, extra in ((210, 55), (160, 40), (100, 25), (45, 12), (0, 0)):
+            pygame.draw.circle(overlay, (0, 0, 0, alpha), (cx, cy), radius + extra)
+        self.screen.blit(overlay, (0, 0))
+
+    def _draw_charge_hud(self, render_data):
+        """畫面下方顯示四色蓄能條與隊伍總進度（幾人已蓄滿）。"""
+        players = render_data.get("players", {})
+        sw, sh = self.screen.get_size()
+        order = ["blue", "green", "pink", "red"]
+        present = [c for c in order if c in players]
+        if not present:
+            return
+
+        bar_w, bar_h, gap = 160, 18, 16
+        total_w = len(present) * bar_w + (len(present) - 1) * gap
+        x0 = (sw - total_w) // 2
+        y0 = sh - 60
+        filled = 0
+        for idx, color in enumerate(present):
+            charge = max(0.0, min(1.0, players[color].get("charge", 0.0)))
+            if charge >= 1.0:
+                filled += 1
+            rgb = _PLAYER_COLORS.get(color, (200, 200, 200))
+            bx = x0 + idx * (bar_w + gap)
+            # 底框
+            pygame.draw.rect(self.screen, (40, 40, 40), (bx, y0, bar_w, bar_h), border_radius=4)
+            # 進度填滿
+            if charge > 0:
+                pygame.draw.rect(self.screen, rgb, (bx, y0, int(bar_w * charge), bar_h), border_radius=4)
+            # 外框：蓄滿時亮白，否則用該玩家顏色
+            border = (255, 255, 255) if charge >= 1.0 else rgb
+            pygame.draw.rect(self.screen, border, (bx, y0, bar_w, bar_h), 2, border_radius=4)
+
+        # 隊伍總進度文字
+        label = self.font.render(f"CHARGED {filled}/{len(present)}", True, (230, 230, 230))
+        self.screen.blit(label, ((sw - label.get_width()) // 2, y0 - 26))
 
     def display(self):
         """將繪製內容更新到螢幕上"""
