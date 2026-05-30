@@ -1,7 +1,8 @@
 """
 BaseLogicInterface：所有小遊戲的抽象基底類別。
-所有遊戲必須繼承此類並實作全部 8 個方法，確保主引擎能動態載入與切換遊戲。
+所有遊戲必須實作全部 8 個方法，確保主引擎能動態載入與切換遊戲。
 """
+import renderer
 
 
 class BaseLogicInterface:
@@ -15,7 +16,18 @@ class BaseLogicInterface:
         """
         self.socket_client = socket_client
         self.player_id_list = player_id_list
-        self.is_active = False  # 遊戲是否正在進行，由 on_enter/on_exit 管理
+        self.is_active = False
+
+        # 通關動畫狀態機
+        self.clear_anim_stage = 0  # 0:None, 1:PrePause, 2:SlideIn, 3:ShowText, 4:SlideOut, 5:Finished
+        self.clear_anim_timer = 0.0
+        self.is_input_locked = False
+
+        # 動畫階段長度定義 (秒)
+        self.ANIM_TIME_PRE = renderer.CLEAR_PRE_PAUSE_TIME
+        self.ANIM_TIME_IN = renderer.CLEAR_IN_TIME
+        self.ANIM_TIME_TEXT = renderer.CLEAR_TEXT_TIME
+        self.ANIM_TIME_OUT = renderer.CLEAR_OUT_TIME
 
     def on_enter(self, params: dict = None):
         """
@@ -24,6 +36,9 @@ class BaseLogicInterface:
         避免在 __init__ 中重複做這些事，確保同一個實例可多次重用（例如重試）。
         """
         self.is_active = True
+        self.clear_anim_stage = 0
+        self.clear_anim_timer = 0.0
+        self.is_input_locked = False
 
     def on_exit(self):
         """
@@ -39,6 +54,45 @@ class BaseLogicInterface:
         :param event_data: 包含 'type'（事件類型）與附加資訊的字典。
         """
         pass
+
+    def trigger_clear_sequence(self):
+        """啟動通關動畫流程，由子類別在勝利時呼叫。"""
+        if self.clear_anim_stage == 0:
+            self.clear_anim_stage = 1
+            self.clear_anim_timer = 0.0
+            self.is_input_locked = True
+            print("[BaseGame] Clear animation triggered.")
+
+    def _update_clear_animation(self, dt: float):
+        """更新動畫計時與階段切換。"""
+        if self.clear_anim_stage == 0 or self.clear_anim_stage == 5:
+            return
+
+        self.clear_anim_timer += dt
+
+        if self.clear_anim_stage == 1:  # Pre Pause
+            if self.clear_anim_timer >= self.ANIM_TIME_PRE:
+                self.clear_anim_stage = 2
+                self.clear_anim_timer = 0.0
+        elif self.clear_anim_stage == 2:  # Slide In
+            if self.clear_anim_timer >= self.ANIM_TIME_IN:
+                self.clear_anim_stage = 3
+                self.clear_anim_timer = 0.0
+        elif self.clear_anim_stage == 3:  # Show Text
+            if self.clear_anim_timer >= self.ANIM_TIME_TEXT:
+                self.clear_anim_stage = 4
+                self.clear_anim_timer = 0.0
+        elif self.clear_anim_stage == 4:  # Slide Out
+            if self.clear_anim_timer >= self.ANIM_TIME_OUT:
+                self.clear_anim_stage = 5
+                self.clear_anim_timer = 0.0
+
+    def _get_clear_anim_data(self) -> dict:
+        """封裝動畫資料供渲染器使用。"""
+        return {
+            "stage": self.clear_anim_stage,
+            "timer": self.clear_anim_timer
+        }
 
     def update(self, dt: float):
         """
@@ -59,7 +113,7 @@ class BaseLogicInterface:
         回傳此小遊戲是否已被玩家合作通關。
         主引擎在每幀的 update 後呼叫此方法，若回傳 True 則切換至下一個流程。
         """
-        return False
+        return self.clear_anim_stage == 5
 
     def get_sync_data(self) -> dict:
         """

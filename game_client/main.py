@@ -4,6 +4,7 @@ Client Entry Point
 """
 import sys
 import os
+import traceback
 
 # 確保當前路徑在 Python 搜尋路徑中，防止 import 失敗
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -22,6 +23,7 @@ def main():
         app.run()
     except Exception as e:
         print(f"[崩潰] 遊戲發生錯誤：{e}")
+        traceback.print_exc()  # 這行會印出精確的檔案路徑與行號
         # 可以在這裡加入寫入 Log 檔案的邏輯
     finally:
         # 3. 關閉程式時恢復休眠設定

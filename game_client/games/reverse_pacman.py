@@ -248,9 +248,6 @@ class ReversePacman(BaseLogicInterface):
         # Pac-Man AI 廣播計時器
         self._pacman_broadcast_timer = 0.0
 
-        # 遊戲是否通關
-        self._cleared = False
-
         # 本地玩家輸入向量（由 handle_event 設定）
         self._input_dx = 0
         self._input_dy = 0
@@ -370,13 +367,17 @@ class ReversePacman(BaseLogicInterface):
 
     def update(self, dt: float):
         """每幀更新所有玩家移動、Pac-Man AI、碰撞偵測、救援計時。"""
-        if not self.is_active or self._cleared:
+        if not self.is_active:
+            return
+
+        self._update_clear_animation(dt)
+        if self.is_cleared():
             return
 
         local = self.players.get(self.local_color)
 
         # 1. 更新本地玩家移動
-        if local and local.is_alive and not local.permanently_down:
+        if local and local.is_alive and not local.permanently_down and not self.is_input_locked:
             # 收集其他玩家的碰撞矩形（包含倒地者）
             other_rects = [p.rect for c, p in self.players.items() if c != self.local_color]
             # 使用封裝在實體中的移動邏輯
@@ -476,11 +477,11 @@ class ReversePacman(BaseLogicInterface):
 
         # 3.5. 壓力板閘門：authority 每幀重新評估，狀態變化才廣播
         # 放在 Pac-Man AI 之前，確保 AI 用最新的閘門牆壁狀態做 BFS
-        if self.is_pacman_authority:
+        if self.is_pacman_authority and not self.is_input_locked:
             self._evaluate_gates()
 
         # 4. Pac-Man AI（僅授權客戶端執行）
-        if self.is_pacman_authority:
+        if self.is_pacman_authority and not self.is_input_locked:
             self._update_pacman_ai(dt)
             self._pacman_broadcast_timer += dt
             if self._pacman_broadcast_timer >= PACMAN_AI_INTERVAL:
@@ -509,9 +510,8 @@ class ReversePacman(BaseLogicInterface):
             self.pacman.speed_boost_timer = max(0.0, self.pacman.speed_boost_timer - dt)
 
         # 6. 通關判定
-        if self.pellets_remaining <= 0:
-            self._cleared = True
-            print("[ReversePacman] cleared! all pellets eaten")
+        if self.pellets_remaining <= 0 and self.clear_anim_stage == 0:
+            self.trigger_clear_sequence()
 
     def get_render_data(self) -> dict:
         """回傳渲染器需要的所有物件資料。"""
@@ -519,6 +519,7 @@ class ReversePacman(BaseLogicInterface):
             "tile_map":    self.tile_map,
             "tile_size":   TILE_SIZE,
             "open_gates":  list(self.open_gates),      # [(row, col), ...]
+            "clear_anim":  self._get_clear_anim_data(),
             "pellets_left": self.pellets_remaining,
             "pacman": {
                 "x": self.pacman.x,

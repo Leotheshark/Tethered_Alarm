@@ -105,27 +105,31 @@ body {
 .ready-button {
     background-color: #fa5c5c;
     color: white;
-    border: 3px solid #e05252;
+    border: none;
+    border-radius: 12px;
     padding: 15px 60px;
     font-size: 1.5rem;
     display: none;
     font-weight: bold;
     cursor: pointer;
-    transition: background-color 0.2s;
-    box-shadow: none;
+    transition: all 0.2s ease;
+    box-shadow: 0 6px 0 #c83f3f;
+    text-transform: uppercase;
 }
 
 .ready-button:hover {
-    background-color: #c83f3f;
+    transform: translateY(-2px);
+    filter: brightness(1.1);
 }
 
 .ready-button:active {
-    transform: none;
+    transform: translateY(2px);
+    box-shadow: none;
 }
 
 .ready-button.active {
     background-color: #ae2f2f;
-    transform: none;
+    box-shadow: 0 2px 0 #7a1f1f;
 }
 
 .room-info {
@@ -136,6 +140,7 @@ body {
     color: #a69076;
     font-size: 1.2rem;
     display: flex;
+    font-weight: bold; /* 讓右上角的 ROOM ID 資訊區域變為粗體 */
     flex-direction: column;
     gap: 5px;
 }
@@ -143,11 +148,14 @@ body {
 .lang-btn,
 .invite-btn {
     background: none;
-    border: 2px solid #d1cec7;
+    border: 1px solid #a69076; /* 將外框變細為 1.5px，並將顏色設為與文字一致的深褐色 */
     color: #a69076;
     padding: 5px 10px;
     cursor: pointer;
+    font-weight: bold; /* 讓平面化設計的語言按鈕與邀請按鈕文字變為粗體 */
     font-size: 0.9rem;
+    transition: background-color 0.2s, color 0.2s;
+    margin-bottom: 5px;
 }
 
 .invite-btn {
@@ -158,6 +166,16 @@ body {
 .lang-btn:hover {
     background-color: #d1cec7;
     color: white;
+}
+
+.invite-btn:active,
+.lang-btn:active {
+    transform: none;
+}
+
+/* 當前選中的語言顏色 */
+.lang-active {
+    color: #ff4d4d !important;
 }
 
 /* 倒數計時遮罩：遊戲準備完成後顯示倒數畫面 */
@@ -399,15 +417,131 @@ body {
     left: 20px;
     background-color: var(--player-blue);
     color: white;
-    border: 3px solid #3a80d0;
+    border: none;
+    border-radius: 10px;
     padding: 10px 30px;
     font-size: 1.2rem;
     font-weight: bold;
     cursor: pointer;
-    transition: background-color 0.2s;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 0 #3a80d0;
     z-index: 50;
 }
 
 .test-vol-btn:hover {
-    background-color: #3a80d0;
+    transform: translateY(-2px);
+    filter: brightness(1.1);
 }
+
+.test-vol-btn:active {
+    transform: translateY(2px);
+    box-shadow: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* 主選單樣式 (Main Menu) - 配合大廳暖色調配色 (#ffebd0 / #7a7570)
+/* ------------------------------------------------------------------ */
+
+/* 全螢幕遮罩層：覆蓋在大廳之上 */
+#main-menu-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: #ffebd0; /* 與大廳背景一致 */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+}
+
+/* 主選單容器：使用半透明白色營造層次感 */
+.menu-content {
+    text-align: center;
+    background: rgba(255, 255, 255, 0.4); 
+    padding: 60px 100px;
+    border-radius: 20px;
+    border: 2px solid #d1cec7; /* 延用大廳邊框顏色 */
+    box-shadow: 0 10px 30px rgba(166, 144, 118, 0.1);
+}
+
+/* 遊戲標題：使用與鬧鐘一致的字體顏色 */
+.menu-title {
+    font-size: 4.5rem;
+    color: #a69076;
+    margin-bottom: 40px;
+    font-weight: bold;
+    letter-spacing: 2px;
+}
+
+/* 選單按鈕通用樣式 */
+.menu-btn {
+    display: block;
+    width: 300px;
+    padding: 16px;
+    margin: 15px auto;
+    font-size: 1.3rem;
+    font-weight: bold;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+}
+
+/* 創建房間按鈕：使用玩家藍色 */
+.host-btn {
+    background-color: var(--player-blue);
+    color: white;
+    box-shadow: 0 4px 0 #3a80d0;
+}
+
+/* 加入房間按鈕：改為實心綠色，帶有 3D 陰影 */
+.join-btn {
+    background-color: var(--player-green);
+    color: white;
+    box-shadow: 0 4px 0 #40a050;
+}
+
+.menu-btn:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.05);
+}
+
+.menu-btn:active {
+    transform: translateY(2px);
+    box-shadow: none;
+}
+
+/* 加入房間的 IP 輸入框樣式 */
+#menu-join-panel input {
+    width: 320px;
+    padding: 15px;
+    background: white;
+    border: 2px solid #d1cec7;
+    border-radius: 10px;
+    color: #7a7570;
+    font-size: 1.2rem;
+    text-align: center;
+    margin-bottom: 25px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+#menu-join-panel input:focus {
+    border-color: var(--player-green);
+}
+
+/* 加入面板的操作按鈕區域 */
+.join-actions {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+}
+
+/* 連線按鈕使用綠色，返回按鈕使用紅色 */
+.confirm-btn { background-color: var(--player-green); color: white; width: 150px; margin: 0; box-shadow: 0 4px 0 #40a050; }
+.back-btn { background-color: var(--player-red); color: white; width: 150px; margin: 0; box-shadow: 0 4px 0 #c83f3f; }
+
+.confirm-btn:hover, .back-btn:hover { filter: brightness(1.05); }

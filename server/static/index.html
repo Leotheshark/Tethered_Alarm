@@ -11,10 +11,29 @@
 
     <!-- 引入外部工具：Socket.io 的客戶端程式碼，讓 lobby 能與後端伺服器通訊 -->
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <link rel="stylesheet" href="/static/style.css">
+    <!-- 修正：加上 static/ 前綴以符合伺服器路由配置 -->
+    <link rel="stylesheet" href="static/style.css">
 
 </head>
 <body>
+    <!-- 主選單首頁 -->
+    <div id="main-menu-overlay">
+        <div class="menu-content">
+            <h1 class="menu-title">Tethered Alarm</h1>
+            <div id="menu-initial-buttons">
+                <button class="menu-btn host-btn" id="btn-create-room">Create Room</button>
+                <button class="menu-btn join-btn" id="btn-show-join-panel">Join Room</button>
+            </div>
+            <div id="menu-join-panel" style="display: none;">
+                <input type="text" id="input-server-ip" placeholder="Enter Host IP (100.x.y.z)">
+                <div class="join-actions">
+                    <button class="menu-btn confirm-btn" id="btn-confirm-join">Connect</button>
+                    <button class="menu-btn back-btn" id="btn-back-to-menu">Back</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 房間已滿遮罩層：當後端回傳 join_failed 時顯示，強制使用者重新選房 -->
     <div id="room-full-overlay">
         <div class="room-full-content">
@@ -27,8 +46,8 @@
     <!-- 房間資訊與邀請連結 -->
     <div class="room-info">
         <button class="lang-btn" id="btn-toggle-language">English / 中文</button>
-        <div><span id="text-room-id-label">ROOM ID</span>: <span id="displayRoomId">----</span></div>
-        <button class="invite-btn" id="btn-invite">Copy Invite Link</button>
+        <div><span id="text-room-id-label">IP</span>: <span id="displayRoomId">----</span></div>
+        <button class="invite-btn" id="btn-invite">Copy Host IP</button>
     </div>
 
     <!-- 鬧鐘時間區域 -->
@@ -116,6 +135,7 @@
     <button id="btn-test-volume" class="test-vol-btn"></button>
 
     <!-- 載入 lobby 行為與 Socket.IO 互動邏輯 -->
-    <script src="/static/app.js" defer></script>
+    <!-- 修正：加上 static/ 前綴以符合伺服器路由配置 -->
+    <script src="static/app.js" defer></script>
 </body>
 </html>

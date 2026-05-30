@@ -16,13 +16,13 @@ import socketio
 class GameNetwork:
     """管理遊戲端與伺服器之間的即時同步。"""
 
-    def __init__(self, engine, server_url="http://127.0.0.1:5000", room_id="default"):
+    def __init__(self, engine, server_url="http://127.0.0.1:5555", room_id="default", player_color="blue"):
         # engine 是 GameEngine；網路事件收到後會回呼 engine 的方法。
         self.engine = engine
         self.server_url = server_url
         self.room_id = room_id
         self.player_id = None    # 連線後由 socket SID 決定
-        self.player_color = None    # 初始設為 None，確保收到伺服器指派前不執行權限邏輯
+        self.player_color = player_color # 從 Lobby 繼承而來的顏色
 
         # 建立可自動重連的 Socket.IO client，避免 server 比 game_client 晚啟動時直接失敗。
         self.sio = socketio.Client(
@@ -72,7 +72,8 @@ class GameNetwork:
         try:
             # 若啟動時已由環境變數指定 ROOM_ID，直接訂閱該房間。
             if self.room_id != "default":
-                self.sio.emit("subscribe_game_room", {"room_id": self.room_id})
+                # 主動向伺服器申報我在大廳取得的顏色
+                self.sio.emit("subscribe_game_room", {"room_id": self.room_id, "player_color": self.player_color})
                 print(f"[GameNetwork] subscribing to configured room: {self.room_id}")
 
             # 若沒有指定房間，請 server 指派一個已滿員、等待鬧鐘流程的房間。
