@@ -67,6 +67,7 @@ class GameEngine:
         self.sound_manager.set_master_volume(0.5)
 
         self.renderer = None  # 視窗建立後才初始化渲染器
+        self.network = None   # 關鍵修正：先定義屬性為 None，防止背景執行緒回呼時噴出 AttributeError
         self.game_window_shown = False
         
         # Socket.IO 回呼在背景執行緒觸發，用旗標讓主迴圈在主執行緒安全執行 Pygame 操作
@@ -74,6 +75,7 @@ class GameEngine:
         self._pending_stop_alarm = False
         self._pending_play_alarm = False
         self._pending_remote_updates = []  # 遠端位置封包佇列（背景執行緒寫入，主迴圈消費）
+        self._pending_caption_update = False # 標題更新旗標，確保執行緒安全
 
         # 優先讀取環境變數中的顏色（由 Lobby 傳入），否則預設藍色
         initial_color = os.environ.get('PLAYER_COLOR', 'blue')
@@ -123,6 +125,8 @@ class GameEngine:
         self.player.color_key = color
         self.player.visual_key = f"{color}_{self.player.direction}"
         print(f"[Engine] player color assigned: {color}")
+        # 僅設定旗標，由主執行緒在 _flush_pending 中更新 UI，防止背景執行緒操作 Pygame 導致崩潰
+        self._pending_caption_update = True
 
     def on_player_moved(self, data):
         """由 GameNetwork 回呼（背景執行緒）：將遠端封包放入佇列，交主迴圈處理。"""
@@ -185,6 +189,9 @@ class GameEngine:
         else:
             self.screen = pygame.display.set_mode((1920, 1080), pygame.FULLSCREEN | pygame.SCALED)
         caption = os.environ.get('DEBUG_TITLE', 'Co-up: Tethered Alarm')
+        # 若已指派顏色則顯示在標題
+        if self.network and self.network.player_color: # 增加安全檢查，確保 network 已實例化
+            caption = f"{caption} (Init: {self.network.player_color})"
         pygame.display.set_caption(caption)
         self.renderer = Renderer(self.screen)
         self.game_window_shown = True
@@ -247,6 +254,13 @@ class GameEngine:
             self._pending_stop_alarm = False
             self.sound_manager.stop(channel_name='alarm', fade_ms=500)
 
+        # 消費標題更新請求 (執行緒安全更新)
+        if self._pending_caption_update and self.game_window_shown:
+            self._pending_caption_update = False
+            base_title = os.environ.get('DEBUG_TITLE', 'Player')
+            color = self.network.player_color if self.network else "unknown"
+            pygame.display.set_caption(f"{base_title} (Assigned: {color})")
+
         # 消費斷線事件佇列
         while self._pending_teammate_events:
             event_type, data = self._pending_teammate_events.pop(0)
@@ -274,6 +288,7 @@ class GameEngine:
             game_name = self._pending_minigame
             # 若尚未取得伺服器分配的顏色，延後啟動，防止 is_authority 判定錯誤
             if self.network.player_color is None:
+                print(f"[Engine] 等待顏色指派中，暫緩啟動 {game_name}...")
                 return
 
             self._pending_minigame = None

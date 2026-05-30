@@ -343,10 +343,11 @@ class ReversePacman(BaseLogicInterface):
         self.open_gates = set()
 
         # 所有玩家狀態字典 { color: PlayerState }，依 player_id_list 的順序對應顏色
+        # 所有玩家狀態字典 { color: PlayerState }
+        # 無論當前連線人數，預先建立所有顏色的實體，確保同步與渲染不中斷
         colors = ["blue", "green", "pink", "red"]
         self.players: dict[str, PlayerState] = {}
-        for i, pid in enumerate(player_id_list):
-            color = colors[i % len(colors)]
+        for color in colors:
             sr, sc = SPAWN_TILES.get(color, (10, 1))
             self.players[color] = PlayerState(color, sr, sc)
 
@@ -384,14 +385,10 @@ class ReversePacman(BaseLogicInterface):
         self.open_gates.clear()
         self.charge_stations = dict(_LEVEL["charge_stations"])
 
-        # 重置所有玩家至出生點與初始狀態
-        colors = ["blue", "green", "pink", "red"]
-        for i, pid in enumerate(self.player_id_list):
-            color = colors[i % len(colors)]
-            if color in self.players:
+        # 將所有顏色玩家重置至各自的出生點
+        for color, p in self.players.items():
                 sr, sc = SPAWN_TILES.get(color, (10, 1))
                 cx, cy = tile_center(sr, sc)
-                p = self.players[color]
                 p.x, p.y = float(cx), float(cy)
                 reset_sync_state(p.sync, float(cx), float(cy))
                 p.is_alive = True

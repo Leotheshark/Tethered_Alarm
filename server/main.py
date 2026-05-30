@@ -294,12 +294,14 @@ async def test_alarm_sound(sid, data=None):
 async def start_game(sid, data):
     """倒數結束後由 lobby 通知同房間所有 client 進入遊戲，並指定要載入的小遊戲。"""
     room_id = data.get("room_id")
-    if room_id in state.rooms:
+    room = state.rooms.get(room_id)
+    if room:
+        room.active_minigame = "reverse_pacman"  # 記錄房間目前正在進行的遊戲
         await sio.emit(ServerEvent.GAME_STARTED, {}, room=room_id)
         # 隨機或固定選擇小遊戲；目前固定為 reverse_pacman
         await sio.emit(
             ServerEvent.START_MINIGAME,
-            {"game": "reverse_pacman"},
+            {"game": room.active_minigame},
             room=room_id,
         )
 
@@ -364,6 +366,12 @@ async def subscribe_game_room(sid, data):
 
     await sio.emit(ServerEvent.GAME_ROOM_SUBSCRIBED, {"room_id": room_id, "player_color": color}, to=sid)
     print(f"[game_client] {sid} subscribed to room {room_id} as {color}")
+
+    # --- 狀態補償：若房間已經在遊戲中，為新連線的 client 補發啟動指令 ---
+    if hasattr(room, "active_minigame") and room.active_minigame:
+        print(f"[game_client] 補發遊戲啟動指令給 {sid} (Game: {room.active_minigame})")
+        await sio.emit(ServerEvent.GAME_STARTED, {}, to=sid)
+        await sio.emit(ServerEvent.START_MINIGAME, {"game": room.active_minigame}, to=sid)
 
 
 # --- 玩家位置同步 ---
