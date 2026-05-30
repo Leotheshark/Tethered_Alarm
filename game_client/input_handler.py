@@ -49,8 +49,8 @@ class InputHandler:
 
     def get_movement_input(self):
         """偵測 WASD 按鍵並回傳移動向量 (dx, dy)"""
-        # DEBUG 多視窗模式：焦點不在自己視窗時不接受輸入
-        if _REQUIRE_FOREGROUND and not _is_my_window_foreground():
+        # 確保只有當視窗在最上層（焦點）時才接受輸入，防止多視窗或背景輸入干擾
+        if not _is_my_window_foreground():
             return 0, 0
 
         dx, dy = 0, 0
@@ -74,8 +74,8 @@ class InputHandler:
         確保多視窗 (DEBUG_WINDOWED) 與 IME 攔截情境下都能可靠取得 E 鍵輸入，
         與 WASD 的偵測機制保持一致。
         """
-        # DEBUG 多視窗模式：焦點不在自己視窗時忽略 E 鍵，避免一按全機都救援
-        if _REQUIRE_FOREGROUND and not _is_my_window_foreground():
+        # 確保只有當視窗在最上層（焦點）時才接受輸入，避免背景視窗觸發救援動作
+        if not _is_my_window_foreground():
             # 若上一幀仍記錄為按下，視為放開以避免卡住救援狀態
             if self._prev_rescue_pressed:
                 self._prev_rescue_pressed = False
