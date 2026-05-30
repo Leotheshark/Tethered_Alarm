@@ -326,11 +326,11 @@ async def game_cleared(sid, data):
     if not _is_room_member(room, sid):
         return
     print(f"[server] game cleared in {room_id}")
-    # 本局結束：清掉 minigame 標記與派發旗標，避免下一局或晚到的 client 被舊狀態誤觸發
-    room.current_minigame = None
-    room.minigame_dispatched = False
     # 廣播給房間所有人（包含大廳），理由為成功
     await sio.emit(ServerEvent.GAME_OVER, {"reason": "success"}, room=room_id)
+    # 重置回大廳可重玩狀態，並重廣播 room_state 讓前端刷新（解除 isBusy → 房主可再設鬧鐘）
+    room.reset_for_lobby()
+    await sio.emit(ServerEvent.ROOM_STATE, room.get_state(), room=room_id)
 
 
 @sio.event
@@ -454,10 +454,10 @@ async def surrender(sid, data):
     if not _is_room_member(room, sid):
         return
     print(f"[server] surrender from {sid} in {room_id}")
-    # 本局結束：清掉 minigame 標記與派發旗標（理由同 game_cleared）
-    room.current_minigame = None
-    room.minigame_dispatched = False
     await sio.emit(ServerEvent.GAME_OVER, {"reason": "surrender"}, room=room_id)
+    # 重置回大廳可重玩狀態，並重廣播 room_state 讓前端刷新（解除 isBusy → 房主可再設鬧鐘）
+    room.reset_for_lobby()
+    await sio.emit(ServerEvent.ROOM_STATE, room.get_state(), room=room_id)
 
 
 # --- 啟動與視窗管理 ---

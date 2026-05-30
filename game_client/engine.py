@@ -396,6 +396,22 @@ class GameEngine:
                         pygame.display.toggle_fullscreen()
                     if event.key == pygame.K_s and self._show_surrender_ui:
                         self.network.send_surrender()
+                    # 失敗投票階段：保留 Y=繼續、N=放棄 的鍵盤快捷（與滑鼠點擊並存）
+                    if self.active_game and getattr(self.active_game, "is_voting", False):
+                        if event.key == pygame.K_y:
+                            self.active_game.handle_event({"type": "vote", "value": True})
+                        elif event.key == pygame.K_n:
+                            self.active_game.handle_event({"type": "vote", "value": False})
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    # 失敗投票階段：左鍵點擊按鈕投票（命中測試用 renderer 畫出的按鈕區域，
+                    # 確保點擊範圍與顯示一致）
+                    if (self.active_game and getattr(self.active_game, "is_voting", False)
+                            and self.renderer is not None):
+                        pos = event.pos
+                        if self.renderer.vote_continue_rect and self.renderer.vote_continue_rect.collidepoint(pos):
+                            self.active_game.handle_event({"type": "vote", "value": True})
+                        elif self.renderer.vote_giveup_rect and self.renderer.vote_giveup_rect.collidepoint(pos):
+                            self.active_game.handle_event({"type": "vote", "value": False})
 
             # E 鍵改用 GetAsyncKeyState 邊緣偵測，與 WASD 一致，避免多視窗 / IME 攔截造成 KEYDOWN 漏接
             rescue_edge = self.input_handler.poll_rescue_edge()

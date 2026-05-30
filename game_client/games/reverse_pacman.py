@@ -131,6 +131,9 @@ PACMAN_SPEED_CAP            = 175   # 基礎速度上限
 PACMAN_DUPLICATE_INTERVAL   = 25.0  # 每幾秒複製出一隻新 Pac-Man
 PACMAN_MAX_COUNT            = 4     # Pac-Man 數量上限
 
+# 失敗投票機制：四人同時倒地後，進入投票決定是否重玩本局
+DEFEAT_VOTE_TIME    = 15.0  # 投票倒數秒數（逾時未投視為放棄）
+
 
 def tile_center(row, col):
     """回傳指定格子中心點的像素座標 (x, y)。"""
@@ -364,7 +367,13 @@ class ReversePacman(BaseLogicInterface):
 
         # 遊戲結束旗標
         self._cleared = False   # 四條全滿通關
-        self._failed = False    # 四人同時倒地失敗（authority 觸發投降後設下，避免重複送）
+        self._failed = False    # 已確定放棄（投票結果為 abort 後設下，避免重複送 surrender）
+
+        # 失敗投票階段狀態（四人倒地後進入；只要有人投繼續就重玩本局）
+        self._voting = False        # 是否處於失敗投票階段
+        self._vote_timer = 0.0      # 投票倒數累加（達 DEFEAT_VOTE_TIME 即結算）
+        self._votes = {}            # { color: True(繼續) / False(放棄) }，以 color 為鍵天然去重
+        self._local_voted = False   # 本機是否已投票，避免重複廣播
 
         # 本地玩家輸入向量（由 handle_event 設定）
         self._input_dx = 0
@@ -409,6 +418,11 @@ class ReversePacman(BaseLogicInterface):
         self._elapsed = 0.0
         self._cleared = False
         self._failed = False
+        # 重置失敗投票狀態（「繼續」會呼叫 on_enter，必須清乾淨以便下次失敗能重新投票）
+        self._voting = False
+        self._vote_timer = 0.0
+        self._votes = {}
+        self._local_voted = False
         self._input_dx = 0
         self._input_dy = 0
         self._holding_e = False
@@ -427,8 +441,24 @@ class ReversePacman(BaseLogicInterface):
                          { 'type': 'rescue_start' }   # E 鍵按下
                          { 'type': 'rescue_stop' }    # E 鍵放開
         E 鍵為情境鍵：附近有可救的倒地隊友 → 救援；否則站在自己蓄能點上 → 蓄能。
+        投票期間（_voting）只處理 'vote'（由 engine 把 Y/N 轉入），其餘輸入忽略。
         """
         etype = event_data.get("type")
+
+        # 失敗投票階段：只接受投票，且每人只投一次。
+        if self._voting:
+            if etype == "vote" and not self._local_voted:
+                value = bool(event_data.get("value"))
+                self._local_voted = True
+                self._apply_vote(self.local_color, value)
+                try:
+                    self.socket_client.send_game_event({
+                        "type": "vote_cast", "color": self.local_color, "value": value,
+                    })
+                except Exception as e:
+                    print(f"[ReversePacman] vote_cast broadcast failed: {e}")
+            return  # 投票期間凍結其餘輸入
+
         if etype == "move":
             # 更新本地輸入方向向量（由 engine 每幀傳入）
             self._input_dx = event_data.get("dx", 0)
@@ -474,6 +504,11 @@ class ReversePacman(BaseLogicInterface):
     def update(self, dt: float):
         """每幀更新所有玩家移動、Pac-Man AI、碰撞偵測、救援與蓄能計時。"""
         if not self.is_active or self._cleared or self._failed:
+            return
+
+        # 失敗投票階段：凍結遊戲邏輯（玩家/Pac-Man 不動），只推進投票倒數與判定。
+        if self._voting:
+            self._update_defeat_vote(dt)
             return
 
         self._elapsed += dt
@@ -600,11 +635,24 @@ class ReversePacman(BaseLogicInterface):
                 }
                 for color, p in self.players.items()
             },
+            # 失敗投票畫面資料：renderer 依此繪製覆蓋層（未投票時 active=False）。
+            "defeat_vote": {
+                "active":      self._voting,
+                "time_left":   max(0.0, DEFEAT_VOTE_TIME - self._vote_timer),
+                "votes":       dict(self._votes),   # { color: True/False }
+                "local_voted": self._local_voted,
+                "local_color": self.local_color,
+            },
         }
 
     def is_cleared(self) -> bool:
         """四位玩家的能量條全部蓄滿時通關。"""
         return self._cleared
+
+    @property
+    def is_voting(self) -> bool:
+        """是否處於失敗投票階段（engine 用來決定是否把 Y/N 鍵轉為投票事件）。"""
+        return self._voting
 
     def get_sync_data(self) -> dict:
         """
@@ -746,6 +794,24 @@ class ReversePacman(BaseLogicInterface):
             # authority 宣告四條全滿通關：所有 client 一起結束本局
             self._cleared = True
 
+        elif dtype == "defeat_vote_start":
+            # 由 authority 開啟失敗投票：非 authority 同步進入投票畫面。
+            if not self._voting:
+                self._start_defeat_vote()
+
+        elif dtype == "vote_cast":
+            # 某玩家投票：各端都記錄（authority 用來收齊判定；其他端用來顯示誰投了）。
+            self._apply_vote(data.get("color"), data.get("value"))
+
+        elif dtype == "vote_result":
+            # authority 宣告投票結果：所有 client 一致套用。
+            if data.get("value") == "continue":
+                self.on_enter()  # 完全重置本局，重新開始
+            else:
+                # abort：結束本局；實際 game_over 由 server 廣播驅動 engine 結束迴圈。
+                self._failed = True
+                self._voting = False
+
     # ─────────────────────────────────────────────────────────────────────
     # 內部輔助方法
     # ─────────────────────────────────────────────────────────────────────
@@ -868,7 +934,7 @@ class ReversePacman(BaseLogicInterface):
 
     def _check_win_and_fail(self):
         """authority 偵測通關（四條全滿）與失敗（四人同時倒地），並廣播給全房。"""
-        if self._cleared or self._failed:
+        if self._cleared or self._failed or self._voting:
             return
         present = list(self.players.values())
         if not present:
@@ -884,14 +950,60 @@ class ReversePacman(BaseLogicInterface):
                 print(f"[ReversePacman] game_cleared broadcast failed: {e}")
             return
 
-        # 失敗：所有在場玩家同時倒地（重用既有投降流程 → server 廣播 game_over → 全員結束本局）
+        # 失敗：所有在場玩家同時倒地 → 進入失敗投票階段（不再直接投降）。
+        # 由 authority 開啟投票並廣播，讓全房同步進入投票畫面；
+        # 只要有人投「繼續」就重玩本局，全員放棄/逾時才真正結束。
         if all(not p.is_alive for p in present):
-            self._failed = True
-            print("[ReversePacman] all players down -> fail (surrender)")
+            print("[ReversePacman] all players down -> defeat vote")
+            self._start_defeat_vote()
             try:
+                self.socket_client.send_game_event({"type": "defeat_vote_start"})
+            except Exception as e:
+                print(f"[ReversePacman] defeat_vote_start broadcast failed: {e}")
+
+    def _start_defeat_vote(self):
+        """進入失敗投票階段（authority 與非 authority 共用，確保各端狀態一致）。"""
+        self._voting = True
+        self._vote_timer = 0.0
+        self._votes = {}
+        self._local_voted = False
+
+    def _update_defeat_vote(self, dt: float):
+        """投票階段每幀邏輯：推進倒數；authority 負責收齊投票或逾時後結算並廣播。"""
+        self._vote_timer += dt
+
+        # 只有 authority 做判定與廣播，確保各 client 結果一致。
+        if not self.is_pacman_authority:
+            return
+
+        present = list(self.players.values())
+        all_voted = len(self._votes) >= len(present) and len(present) > 0
+        timed_out = self._vote_timer >= DEFEAT_VOTE_TIME
+        if not (all_voted or timed_out):
+            return  # 尚未收齊也未逾時，繼續等
+
+        # 結算：只要有人投「繼續」(True) 就重玩本局；否則（全放棄或逾時無人投）放棄。
+        if any(self._votes.values()):
+            print("[ReversePacman] defeat vote -> CONTINUE (someone voted to continue)")
+            try:
+                self.socket_client.send_game_event({"type": "vote_result", "value": "continue"})
+            except Exception as e:
+                print(f"[ReversePacman] vote_result(continue) broadcast failed: {e}")
+            self.on_enter()  # 完全重置本局
+        else:
+            print("[ReversePacman] defeat vote -> ABORT (all gave up / timed out)")
+            self._failed = True
+            self._voting = False
+            try:
+                self.socket_client.send_game_event({"type": "vote_result", "value": "abort"})
                 self.socket_client.send_surrender()
             except Exception as e:
-                print(f"[ReversePacman] surrender on fail failed: {e}")
+                print(f"[ReversePacman] vote_result(abort)/surrender failed: {e}")
+
+    def _apply_vote(self, color, value):
+        """記錄某顏色玩家的投票（以 color 為鍵天然去重，重投以最後一次為準）。"""
+        if color in self.players:
+            self._votes[color] = bool(value)
 
     def _update_pacman_ai(self, pm: PacManState, dt: float):
         """

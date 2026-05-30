@@ -32,6 +32,9 @@ class Renderer:
         self.font = pygame.font.SysFont(None, 24)
         self.font_large = pygame.font.SysFont(None, 52)
         self.font_clear = pygame.font.SysFont(None, 300, bold=True)
+        # 失敗投票按鈕的點擊區域（由 _draw_defeat_vote 每幀更新；engine 讀此做滑鼠命中測試）
+        self.vote_continue_rect = None
+        self.vote_giveup_rect = None
 
     def clear(self):
         """用背景色清空畫面"""
@@ -300,6 +303,79 @@ class Renderer:
         #    新版以 _cleared/_failed 旗標結束，暫時不送 clear_anim 資料 → stage 0 靜默不畫；
         #    待結束流程接上 clear_anim 排程後即可自動顯示。
         self._draw_clear_overlay(clear_anim)
+
+        # 失敗投票覆蓋層（四人倒地後出現，蓋在最上層）
+        self._draw_defeat_vote(render_data.get("defeat_vote"))
+
+    def _draw_defeat_vote(self, vote):
+        """繪製失敗投票畫面：半透明黑底 + 標題/倒數 + 兩個可點按鈕（含票數）+ 四色投票明細。
+        按鈕的點擊區域存入 self.vote_*_rect 供 engine 做滑鼠命中測試。
+        文字皆用英文以配合 SysFont(None) 內建字型（中文會渲染成方塊）。"""
+        if not vote or not vote.get("active"):
+            # 非投票階段：清掉按鈕區域，避免 engine 誤判殘留的點擊區
+            self.vote_continue_rect = None
+            self.vote_giveup_rect = None
+            return
+
+        sw, sh = self.screen.get_size()
+        # 半透明黑底覆蓋全畫面
+        overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 200))
+        self.screen.blit(overlay, (0, 0))
+
+        cx = sw // 2
+
+        # 標題
+        title = self.font_large.render("ALL DOWN!", True, (255, 80, 80))
+        self.screen.blit(title, (cx - title.get_width() // 2, sh // 2 - 180))
+
+        # 倒數
+        secs = int(vote.get("time_left", 0)) + 1  # 向上取整，顯示較直覺
+        countdown = self.font_large.render(f"{secs}s", True, (230, 230, 230))
+        self.screen.blit(countdown, (cx - countdown.get_width() // 2, sh // 2 - 120))
+
+        # 統計票數
+        votes = vote.get("votes", {})
+        local_color = vote.get("local_color")
+        local_voted = vote.get("local_voted", False)
+        continue_count = sum(1 for v in votes.values() if v)
+        giveup_count = sum(1 for v in votes.values() if not v)
+
+        # 兩個並排按鈕（可點）：CONTINUE(綠) / GIVE UP(紅)，按鈕上標票數
+        btn_w, btn_h, gap = 300, 90, 60
+        by = sh // 2 - 40
+        self.vote_continue_rect = pygame.Rect(cx - btn_w - gap // 2, by, btn_w, btn_h)
+        self.vote_giveup_rect = pygame.Rect(cx + gap // 2, by, btn_w, btn_h)
+        # 本機已投票後按鈕變暗，提示已不可再點
+        cont_bg = (40, 110, 40) if local_voted else (60, 170, 60)
+        give_bg = (110, 40, 40) if local_voted else (170, 60, 60)
+        self._draw_vote_button(self.vote_continue_rect, "CONTINUE", continue_count, cont_bg)
+        self._draw_vote_button(self.vote_giveup_rect, "GIVE UP", giveup_count, give_bg)
+
+        # 提示文字（滑鼠點擊）
+        tip_txt = "Voted - waiting for others..." if local_voted else "Click to vote"
+        tip = self.font.render(tip_txt, True, (210, 210, 210))
+        self.screen.blit(tip, (cx - tip.get_width() // 2, by + btn_h + 16))
+
+        # 四色投票明細：CONTINUE(綠) / GIVE UP(紅) / 未投(灰)
+        y = by + btn_h + 56
+        for color in ("blue", "green", "pink", "red"):
+            if color in votes:
+                label, c = ("CONTINUE", (120, 230, 120)) if votes[color] else ("GIVE UP", (230, 120, 120))
+            else:
+                label, c = ("waiting...", (160, 160, 160))
+            me = " (you)" if color == local_color else ""
+            line = self.font.render(f"{color.upper()}{me}: {label}", True, c)
+            self.screen.blit(line, (cx - line.get_width() // 2, y))
+            y += 28
+
+    def _draw_vote_button(self, rect, label, count, bg_color):
+        """繪製單一投票按鈕：底色矩形 + 邊框 + 「LABEL (count)」文字置中。"""
+        pygame.draw.rect(self.screen, bg_color, rect, border_radius=8)
+        pygame.draw.rect(self.screen, (235, 235, 235), rect, width=2, border_radius=8)
+        text = self.font_large.render(f"{label}  ({count})", True, (255, 255, 255))
+        self.screen.blit(text, (rect.centerx - text.get_width() // 2,
+                                rect.centery - text.get_height() // 2))
 
     def _draw_clear_overlay(self, anim):
         stage = anim.get("stage", 0)
