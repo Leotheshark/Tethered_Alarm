@@ -83,8 +83,19 @@ class Renderer:
                     label = self.font.render("OFFLINE", True, (200, 80, 80))
                     self.screen.blit(label, (entity.x - label.get_width() // 2, entity.y - 36))
 
-    def draw_status_ui(self, disconnected_colors, show_surrender):
+    def draw_status_ui(self, disconnected_colors, show_surrender, local_disconnected=False):
         """繪製斷線提示與投降按鈕。"""
+        # 本機自己斷線：頂部置中顯示醒目橫幅，讓玩家知道「不是卡住，是連線斷了」，
+        # 而非畫面照常運行卻悄悄不再同步（隊友會誤以為你掛機）。
+        # 用英文以配合 SysFont(None) 內建字型（不含中文字符，中文會渲染成方塊）。
+        if local_disconnected:
+            banner = self.font_large.render("CONNECTION LOST - RECONNECTING...", True, (255, 220, 80))
+            sw = self.screen.get_width()
+            bg = pygame.Surface((banner.get_width() + 40, banner.get_height() + 16), pygame.SRCALPHA)
+            bg.fill((120, 0, 0, 180))
+            self.screen.blit(bg, (sw // 2 - bg.get_width() // 2, 8))
+            self.screen.blit(banner, (sw // 2 - banner.get_width() // 2, 16))
+
         y = 40
         for color in disconnected_colors:
             msg = self.font.render(f"[{color.upper()}] TEAMMATE OFFLINE", True, (220, 100, 100))

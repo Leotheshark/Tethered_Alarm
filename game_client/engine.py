@@ -90,6 +90,7 @@ class GameEngine:
         self._show_surrender_ui = False    # 是否顯示投降按鈕
         self._game_over = False
         self._pending_teammate_events = [] # 來自背景執行緒的斷線事件佇列
+        self._local_disconnected = False   # 本機自己是否與 server 斷線（由 network 回呼設定）
 
         # 小遊戲狀態
         self.active_game = None            # 目前正在運行的 BaseLogicInterface 實例
@@ -144,6 +145,11 @@ class GameEngine:
     def on_game_over(self, data):
         """遊戲結束（背景執行緒）。"""
         self._pending_teammate_events.append(("game_over", data))
+
+    def on_connection_changed(self, connected: bool):
+        """本機與 server 的連線狀態改變（背景執行緒）。
+        只設定一個 bool 旗標（原子操作，執行緒安全），由主迴圈渲染時讀取顯示提示。"""
+        self._local_disconnected = not connected
 
     def on_start_minigame(self, data):
         """伺服器通知要載入哪個小遊戲（背景執行緒）。
@@ -415,8 +421,10 @@ class GameEngine:
                     if sync_data:
                         try:
                             self.network.send_game_event(sync_data)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # send_game_event 內部已有連線守衛，正常不會到這；真有非預期
+                            # 例外時印一次（非每幀洗版）以保留可觀測性，不再完全靜默吞掉。
+                            print(f"[Engine] send_game_event unexpected error: {e}")
 
                 # 通關判定
                 if self.active_game.is_cleared():
@@ -459,7 +467,7 @@ class GameEngine:
                 # 一般模式：繪製角色實體
                 self.renderer.draw_world(self.entity_manager)
             self.renderer.draw_ui(self.clock)
-            self.renderer.draw_status_ui(self._disconnected_colors, self._show_surrender_ui)
+            self.renderer.draw_status_ui(self._disconnected_colors, self._show_surrender_ui, self._local_disconnected)
             self.renderer.display()
 
         pygame.quit()

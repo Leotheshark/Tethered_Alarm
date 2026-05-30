@@ -72,6 +72,9 @@ class GameNetwork:
         """連上 server 後，記錄自身 player_id 並請求綁定房間。"""
         self.player_id = self.sio.sid
         print("[GameNetwork] connected, SID:", self.sio.sid)
+        # 通知 engine 清除「連線中斷」提示（涵蓋首次連線與自動重連成功）
+        if hasattr(self.engine, "on_connection_changed"):
+            self.engine.on_connection_changed(True)
         try:
             # 若啟動時已由環境變數指定 ROOM_ID（正式流程的常態），直接帶著大廳繼承的
             # 顏色訂閱該房間即可。此時「不」再發 request_game_room——否則 server 會回
@@ -88,8 +91,11 @@ class GameNetwork:
             print(f"[GameNetwork] room subscription error: {e}")
 
     def _on_disconnect(self):
-        """連線中斷時只記錄狀態；socketio client 會依設定自動重連。"""
+        """連線中斷時記錄狀態並通知 engine 顯示提示；socketio client 會依設定自動重連。"""
         print("[GameNetwork] disconnected")
+        # 通知 engine 顯示「連線中斷」提示，讓玩家知道畫面停止同步是斷線而非當機
+        if hasattr(self.engine, "on_connection_changed"):
+            self.engine.on_connection_changed(False)
 
     def _on_assign_room(self, data):
         """server 指派房間後，正式訂閱該 room 的廣播事件。"""
