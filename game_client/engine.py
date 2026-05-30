@@ -92,6 +92,7 @@ class GameEngine:
         # 小遊戲狀態
         self.active_game = None            # 目前正在運行的 BaseLogicInterface 實例
         self._pending_minigame = None      # 背景執行緒設定的待啟動遊戲名稱
+        self._pending_minigame_roster = None  # server 派發的權威玩家名單 [{sid, color}, ...]
         self._pending_game_events = []     # 來自背景執行緒的小遊戲事件佇列
         self._game_sync_timer = 0.0        # 玩家位置同步至小遊戲的計時器
         self._GAME_SYNC_INTERVAL = 0.05    # 每 50ms 廣播一次小遊戲玩家位置
@@ -141,11 +142,22 @@ class GameEngine:
         self._pending_teammate_events.append(("game_over", data))
 
     def on_start_minigame(self, data):
-        """伺服器通知要載入哪個小遊戲（背景執行緒）。"""
-        self._pending_minigame = data.get("game")
+        """伺服器通知要載入哪個小遊戲（背景執行緒）。
+        data 夾帶 server 派發的權威玩家名單 players=[{sid, color, authority}, ...]，
+        所有 client 共用同一份，確保 player_id_list 一致、authority 判定不分歧。"""
         game_name = data.get("game")
-        print(f"[Debug] 收到小遊戲啟動通知: {game_name}")
         self._pending_minigame = game_name
+        roster = data.get("players")
+        self._pending_minigame_roster = roster
+        # 由 server 名單決定本機是否為權威端。用「顏色」配對而非 sid：client 端的 socket sid
+        # 與 server session id 不保證相同（python-socketio 兩端 sid 來源不同），而顏色在房內唯一，
+        # 是穩定可靠的對位鍵。取代「顏色==blue」硬猜：重連或缺色時也不會授權錯配。
+        if roster:
+            my_color = self.network.player_color
+            self.network.is_authority = any(
+                e.get("color") == my_color and e.get("authority") for e in roster
+            )
+        print(f"[Debug] 收到小遊戲啟動通知: {game_name}, authority={self.network.is_authority}, roster={roster}")
 
     def on_game_event(self, data):
         """接收小遊戲即時事件（背景執行緒）。"""
@@ -197,24 +209,45 @@ class GameEngine:
                 VisualRegistry.load_image(f"{c}_{s}", f"{c}_{s}.png")
         VisualRegistry.load_image("dead", "dead.png")
 
+    def _is_minigame_ready(self):
+        """
+        判斷現在是否可安全啟動小遊戲。
+
+        server 已保證「4 個 game_client 都訂閱後」才派發 start_minigame，並夾帶權威玩家
+        名單（_pending_minigame_roster）。因此只要拿到該名單、且本地連線與顏色就緒即可啟動，
+        不再靠 presence 心跳猜人數（那會因 client 啟動時間差而名單殘缺、各玩各的瞬間通關）。
+        """
+        if self.network.player_color is None or not self.network.player_id:
+            return False
+        # 正式流程：等 server 的權威名單到手才啟動
+        if self._pending_minigame_roster:
+            return True
+        # 相容 DEBUG_MINIGAME（本地直接設旗標、無 server 名單）：連線與顏色就緒即可
+        return True
+
     def _build_ordered_player_id_list(self):
-        """所有 client 對 player_id_list 達成共識：按 server 指派的顏色順序排序，
-        缺顏色的（還沒收到 game_room_subscribed）排在最後並依 sid 排序。"""
+        """
+        產出 player_id_list。優先採用 server 派發的權威名單（_pending_minigame_roster），
+        確保所有 client 拿到完全一致的順序；缺名單時（DEBUG_MINIGAME）退回本地推算。
+        """
+        roster = self._pending_minigame_roster
+        if roster:
+            # server 已依顏色順序排好，直接取 sid
+            return [entry["sid"] for entry in roster if entry.get("sid")]
+
+        # ── 退回路徑：無 server 名單（DEBUG_MINIGAME 等）時，用本地資訊推算 ──
         color_order = {"blue": 0, "green": 1, "pink": 2, "red": 3}
         entries = []
-        # 本地玩家
         if self.network.player_id:
             entries.append((self.player.color_key, self.network.player_id))
         else:
             print("[Debug] 建立名單失敗: network.player_id 為空")
-        # 遠端玩家
         for pid, ghost in self.remote_ghosts.items():
             entries.append((ghost.color_key, pid))
 
         def sort_key(item):
             color, pid = item
-            rank = color_order.get(color, 99)
-            return (rank, pid or "")
+            return (color_order.get(color, 99), pid or "")
 
         entries.sort(key=sort_key)
         return [pid for _color, pid in entries]
@@ -227,6 +260,9 @@ class GameEngine:
             if present >= self._debug_required_players:
                 print(f"[Engine] DEBUG_MINIGAME: 人數已達 {present}/{self._debug_required_players}，啟動 {self._debug_minigame_name}")
                 self._pending_minigame = self._debug_minigame_name
+                # 此路徑無 server roster，以顏色 fallback 設定權威端（藍色），
+                # 確保仍有唯一 authority 推進 AI 與通關判定。
+                self.network.is_authority = (self.network.player_color == "blue")
                 self._debug_minigame_pending = False
             else:
                 self._debug_wait_log_timer += 1
@@ -272,9 +308,11 @@ class GameEngine:
         # 消費小遊戲啟動請求：在主執行緒安全地實例化並啟動遊戲
         if self._pending_minigame:
             game_name = self._pending_minigame
-            # 若尚未取得伺服器分配的顏色，延後啟動，防止 is_authority 判定錯誤
-            if self.network.player_color is None:
-                return
+
+            # 啟動就緒守衛：未就緒就延後到下一幀重試，
+            # 避免在 socket 未連上時用殘缺的 player_id_list 建立遊戲而卡在地圖中心。
+            if not self._is_minigame_ready():
+                return  # 保留 _pending_minigame 旗標，下一幀再檢查
 
             self._pending_minigame = None
             game_cls = _MINIGAME_CLASSES.get(game_name)
@@ -287,6 +325,7 @@ class GameEngine:
                 print(f"[Engine] minigame started: {game_name}")
             else:
                 print(f"[Engine] unknown minigame: {game_name}")
+            self._pending_minigame_roster = None  # 已用完，清掉避免影響下一局
 
         # 消費小遊戲事件佇列：轉發給活躍的小遊戲實例
         while self._pending_game_events:

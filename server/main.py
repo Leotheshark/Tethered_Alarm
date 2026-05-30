@@ -294,14 +294,18 @@ async def test_alarm_sound(sid, data=None):
 async def start_game(sid, data):
     """倒數結束後由 lobby 通知同房間所有 client 進入遊戲，並指定要載入的小遊戲。"""
     room_id = data.get("room_id")
-    if room_id in state.rooms:
-        await sio.emit(ServerEvent.GAME_STARTED, {}, room=room_id)
+    room = state.rooms.get(room_id)
+    if room:
         # 隨機或固定選擇小遊戲；目前固定為 reverse_pacman
-        await sio.emit(
-            ServerEvent.START_MINIGAME,
-            {"game": "reverse_pacman"},
-            room=room_id,
-        )
+        minigame = "reverse_pacman"
+        # 只記錄要玩的小遊戲，並重置派發旗標；此時 game_client 進程尚未啟動，
+        # 真正的 START_MINIGAME（含權威玩家名單）延後到 4 個 game_client 都訂閱後
+        # 由 _maybe_dispatch_minigame 統一派發一次，確保各 client 拿到一致的名單。
+        room.current_minigame = minigame
+        room.minigame_dispatched = False
+
+        # GAME_STARTED 仍立即廣播：lobby 前端需要它來停鬧鐘、開遊戲視窗（launch game_client）。
+        await sio.emit(ServerEvent.GAME_STARTED, {}, room=room_id)
 
 @sio.event
 async def game_cleared(sid, data):
@@ -309,6 +313,11 @@ async def game_cleared(sid, data):
     room_id = data.get("room_id")
     if room_id:
         print(f"[server] game cleared in {room_id}")
+        # 本局結束：清掉 minigame 標記與派發旗標，避免下一局或晚到的 client 被舊狀態誤觸發
+        room = state.rooms.get(room_id)
+        if room:
+            room.current_minigame = None
+            room.minigame_dispatched = False
         # 廣播給房間所有人（包含大廳），理由為成功
         await sio.emit(ServerEvent.GAME_OVER, {"reason": "success"}, room=room_id)
 
@@ -354,16 +363,61 @@ async def subscribe_game_room(sid, data):
 
     await sio.enter_room(sid, room_id)
 
-    # 優先使用客戶端申報的顏色（來自大廳繼承），若無則使用計數器（相容除錯模式）
-    color = data.get("player_color")
-    if not color:
-        color = state.colors[room.game_client_count % len(state.colors)]
-        room.game_client_count += 1
+    # 顏色決策優先序：
+    # 1) 同一 sid 重訂閱（重連 / change_room）→ 沿用既有顏色，絕不重新指派或遞增計數器，
+    #    否則同一 client 會拿到兩個顏色、座位與權威判定分歧。
+    # 2) 客戶端申報的顏色（來自大廳繼承）。
+    # 3) 都沒有 → 用計數器依序指派（相容 debug 直連模式）。
+    if sid in room.game_client_sids:
+        color = room.game_client_sids[sid]
+    else:
+        color = data.get("player_color")
+        if not color:
+            color = state.colors[room.game_client_count % len(state.colors)]
+            room.game_client_count += 1
 
     room.game_client_sids[sid] = color
 
     await sio.emit(ServerEvent.GAME_ROOM_SUBSCRIBED, {"room_id": room_id, "player_color": color}, to=sid)
     print(f"[game_client] {sid} subscribed to room {room_id} as {color}")
+
+    # 每次有 game_client 訂閱後，檢查是否該派發 minigame（湊滿才發，且只發一次）。
+    await _maybe_dispatch_minigame(room)
+
+
+def _ordered_game_client_roster(room):
+    """
+    產出房間內 game_client 的權威名單，依顏色固定順序（blue→green→pink→red）排序。
+    client 端用這份名單建立一致的 player_id_list，避免各自靠 presence 心跳猜而分歧。
+    名單第一位（依顏色順序為 blue）標記 authority=True，作為 Pac-Man AI / 通關判定的
+    權威端來源；client 不再各自用「顏色==blue」硬猜，避免重連或缺色時授權錯配。
+    """
+    color_rank = {"blue": 0, "green": 1, "pink": 2, "red": 3}
+    roster = [{"sid": sid, "color": color} for sid, color in room.game_client_sids.items()]
+    roster.sort(key=lambda e: (color_rank.get(e["color"], 99), e["sid"]))
+    for i, entry in enumerate(roster):
+        entry["authority"] = (i == 0)  # 排序後第一位為唯一授權端
+    return roster
+
+
+async def _maybe_dispatch_minigame(room):
+    """
+    當本局已選定小遊戲、且 4 個 game_client 都已訂閱時，對全房派發一次 START_MINIGAME，
+    並夾帶權威玩家名單。只派發一次（minigame_dispatched 旗標），確保各 client 同步且一致。
+    """
+    if not room.current_minigame or room.minigame_dispatched:
+        return
+    if len(room.game_client_sids) < room.max_players:
+        return  # 尚未湊滿全部 game_client，繼續等下一個訂閱
+
+    room.minigame_dispatched = True
+    roster = _ordered_game_client_roster(room)
+    await sio.emit(
+        ServerEvent.START_MINIGAME,
+        {"game": room.current_minigame, "players": roster},
+        room=room.room_id,
+    )
+    print(f"[game_client] dispatched start_minigame ({room.current_minigame}) with roster: {roster}")
 
 
 # --- 玩家位置同步 ---
@@ -382,6 +436,11 @@ async def surrender(sid, data):
     room_id = data.get("room_id")
     if room_id:
         print(f"[server] surrender from {sid} in {room_id}")
+        # 本局結束：清掉 minigame 標記與派發旗標（理由同 game_cleared）
+        room = state.rooms.get(room_id)
+        if room:
+            room.current_minigame = None
+            room.minigame_dispatched = False
         await sio.emit(ServerEvent.GAME_OVER, {"reason": "surrender"}, room=room_id)
 
 

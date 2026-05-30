@@ -8,6 +8,9 @@ class GameRoom:
         self.host_sid = None    # 房長的 Socket ID (第一位進來的玩家)
         self.game_client_count = 0      # 已訂閱的 game_client 數量，用於依序指派顏色
         self.game_client_sids = {}      # { sid: color }，追蹤在線的 game_client
+        self.current_minigame = None    # 本局要載入的小遊戲名稱；start_game 時設定。
+        self.minigame_dispatched = False  # 本局是否已對全房派發過 start_minigame（含權威名單）。
+                                        # 待 4 個 game_client 都訂閱後才派發一次，避免名單殘缺或重複廣播。
 
     def add_player(self, sid):
         """嘗試將玩家加入房間"""

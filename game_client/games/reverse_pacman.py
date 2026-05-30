@@ -332,9 +332,10 @@ class ReversePacman(BaseLogicInterface):
         self.local_color = socket_client.player_color       # 本機玩家顏色
         self.local_pid = socket_client.player_id            # 本機玩家 Socket ID
 
-        # 判斷本機是否為 Pac-Man AI 授權客戶端：伺服器保證第一個訂閱房間的是藍色，
-        # 用顏色判定比動態列表更穩定。
-        self.is_pacman_authority = (self.local_color == "blue")
+        # 是否為 Pac-Man AI 授權客戶端：直接採用 network 的單一真值源（由 server 在
+        # start_minigame roster 指定；DEBUG_MINIGAME 等無名單路徑由 engine 以顏色 fallback
+        # 預先設好）。小遊戲不再自行用顏色硬猜，避免重連/缺色時授權錯配。
+        self.is_pacman_authority = bool(getattr(socket_client, "is_authority", self.local_color == "blue"))
 
         # 地圖狀態：使用可修改的二維陣列（pellet 轉空地 + 灑上迷霧）
         self.tile_map = build_tile_map()
