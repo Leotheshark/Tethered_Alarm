@@ -53,7 +53,7 @@ MAP_LAYOUT = [
 ROWS = len(MAP_LAYOUT)
 COLS = len(MAP_LAYOUT[0])
 TILE_SIZE = 60
-AVATAR_SIZE = 28
+AVATAR_SIZE = 24
 
 # ─── 玩家初始出生位置（格座標，依顏色）──────────────────────────────────────
 SPAWN_TILES = {
@@ -72,7 +72,7 @@ PACMAN_BASE_SPEED   = 100   # 正常速度
 PACMAN_FAST_SPEED   = 165   # 被獵食後暫時加速（1.5 倍）
 CATCH_RADIUS        = 56    # 增加捕捉半徑，配合 64x64 的角色尺寸
 MAX_RESCUES         = 2     # 每位玩家被救援的上限次數
-RESCUE_RADIUS       = 70    # 救援互動的有效距離（像素）
+RESCUE_RADIUS       = 70   # 救援互動的有效距離（像素）
 RESCUE_HOLD_TIME    = 2.0   # 按住 E 多少秒才完成救援
 DEBUFF_DURATION     = 15.0  # 被抓後移速減半持續秒數
 SPIKE_SLOW_DURATION = 3.0   # 釘板緩速持續秒數
@@ -219,7 +219,8 @@ class ReversePacman(BaseLogicInterface):
         self.local_pid = socket_client.player_id            # 本機玩家 Socket ID
 
         # 判斷本機是否為 Pac-Man AI 授權客戶端：名單第一位負責
-        self.is_pacman_authority = bool(player_id_list) and (self.local_pid == player_id_list[0])
+        # 改用顏色判定，因為伺服器保證第一個訂閱房間的是藍色，這比動態列表更穩定
+        self.is_pacman_authority = (self.local_color == "blue")
 
         # 地圖狀態：使用可修改的二維陣列（原始 MAP_LAYOUT 不應被修改）
         self.tile_map = [row[:] for row in MAP_LAYOUT]

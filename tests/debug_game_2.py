@@ -40,7 +40,7 @@ def main():
             env=server_env,
         ))
         # 等 server 起來再開 client
-        time.sleep(2)
+        time.sleep(0.5)
 
     # 視窗 1280x720，階梯式排列（會互相重疊，需要 Alt+Tab 切換看不同玩家）
     positions = [
@@ -64,7 +64,7 @@ def main():
         env["SERVER_URL"] = "http://127.0.0.1:5000"
         print(f"[debug] 啟動 client {i + 1} 於 {positions[i]}")
         procs.append(subprocess.Popen([sys.executable, game_client], env=env))
-        time.sleep(0.5)  # 錯開連線，避免顏色指派競爭
+        time.sleep(0.2)  # 錯開連線，避免顏色指派競爭
 
     print("[debug] 全部啟動完成。按 Ctrl+C 關閉所有視窗。")
     try:

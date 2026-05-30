@@ -271,6 +271,10 @@ class GameEngine:
         # 消費小遊戲啟動請求：在主執行緒安全地實例化並啟動遊戲
         if self._pending_minigame:
             game_name = self._pending_minigame
+            # 若尚未取得伺服器分配的顏色，延後啟動，防止 is_authority 判定錯誤
+            if self.network.player_color is None:
+                return
+
             self._pending_minigame = None
             game_cls = _MINIGAME_CLASSES.get(game_name)
             if game_cls:

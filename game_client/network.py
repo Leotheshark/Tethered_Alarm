@@ -22,7 +22,7 @@ class GameNetwork:
         self.server_url = server_url
         self.room_id = room_id
         self.player_id = None    # 連線後由 socket SID 決定
-        self.player_color = "blue"  # 伺服器指派後更新
+        self.player_color = None    # 初始設為 None，確保收到伺服器指派前不執行權限邏輯
 
         # 建立可自動重連的 Socket.IO client，避免 server 比 game_client 晚啟動時直接失敗。
         self.sio = socketio.Client(

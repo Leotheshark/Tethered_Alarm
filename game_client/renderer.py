@@ -99,6 +99,7 @@ class Renderer:
         tile_colors = render_data.get("tile_colors", _TILE_COLORS)
         players  = render_data.get("players", {})
         pacman   = render_data.get("pacman", {})
+        buttons  = render_data.get("buttons", [])
 
         rows = len(tile_map)
         cols = len(tile_map[0]) if rows > 0 else 0
@@ -151,6 +152,68 @@ class Renderer:
                         (tx + inner, ty + inner, tile_size - inner * 2, tile_size - inner * 2)
                     )
 
+        # 1.5. 繪製互動按鈕 (原生 Pygame 繪圖實作發光)
+        for btn in buttons:
+            bx, by = int(btn["x"]) - ox, int(btn["y"]) - oy
+
+            color_rgb = _PLAYER_COLORS.get(btn["color"], (200, 200, 200))
+
+            # 能量填滿瞬間的單次閃光特效 (播放一次)
+            act_t = btn.get("activated_time", 0)
+            if act_t > 0:
+                elapsed = pygame.time.get_ticks() - act_t
+                if 0 < elapsed < 400:  # 特效持續 0.4 秒
+                    f_prog = elapsed / 400.0
+                    f_size = int(50 + f_prog * 250)    # 從 50px 迅速擴張到 300px
+                    f_alpha = int(30 * (1.0 - f_prog ** 2)) # 隨著擴張逐漸變透明
+                    f_surf = pygame.Surface((f_size, f_size), pygame.SRCALPHA)
+                    pygame.draw.rect(f_surf, (*color_rgb, f_alpha), (0, 0, f_size, f_size), border_radius=25)
+                    self.screen.blit(f_surf, (bx - f_size // 2, by - f_size // 2))
+
+            size = 60
+            
+            if btn["triggered"]:
+                # 繪製發光效果：多層半透明擴散
+                for i in range(3):
+                    glow_size = size + (i + 1) * 10
+                    # 建立暫時的透明表面
+                    s = pygame.Surface((glow_size, glow_size), pygame.SRCALPHA)
+                    alpha = 100 - (i * 30)
+                    pygame.draw.rect(s, (*color_rgb, alpha), (0, 0, glow_size, glow_size), border_radius=10)
+                    self.screen.blit(s, (bx - glow_size // 2, by - glow_size // 2))
+
+                # 繪製動態水波擴散效果 (Pulse Ripple)
+                curr_t = pygame.time.get_ticks() / 1000.0
+                for i in range(4):  # 使用兩層交替的擴散波紋，營造層次感
+                    # prog 介於 0.0 ~ 1.0 之間，控制單次波紋的擴張進度
+                    prog = ((curr_t + i * 0.4) % 1.6) / 1.6
+                    ripple_size = int(size + prog * 50)  # 波紋從 50px 擴散到 100px
+                    alpha = int(160 * (1.0 - prog))      # 越往外擴散，顏色越淡
+                    
+                    # 建立帶 Alpha 通道的透明 Surface
+                    s = pygame.Surface((ripple_size, ripple_size), pygame.SRCALPHA)
+                    # 繪製空心的圓角矩形框，寬度2
+                    line_w = 2
+                    pygame.draw.rect(s, (*color_rgb, alpha), (0, 0, ripple_size, ripple_size), line_w, border_radius=10)
+                    self.screen.blit(s, (bx - ripple_size // 2, by - ripple_size // 2))
+
+                # 實心中心
+                pygame.draw.rect(self.screen, color_rgb, (bx - size // 2, by - size // 2, size, size), border_radius=10)
+                pygame.draw.rect(self.screen, color_rgb, (bx - size // 2, by - size // 2, size, size), 3, border_radius=10)
+            else:
+                # 未觸發狀態：外框直接使用 constants.py 定義的對應顏色
+                pygame.draw.rect(self.screen, color_rgb, (bx - size // 2, by - size // 2, size, size), 3, border_radius=10)
+                
+                # 繪製充能進度條
+                prog = btn["progress"]
+                if prog > 0:
+                    prog_h = int((size - 4) * prog)
+                    pygame.draw.rect(
+                        self.screen, 
+                        color_rgb, 
+                        (bx - size // 2 + 2, by + size // 2 - 2 - prog_h, size - 4, prog_h),
+                    )
+
         # 2. 繪製玩家（依 Y 座標從上到下，避免重疊遮擋問題）
         sorted_players = sorted(players.items(), key=lambda kv: kv[1].get("y", 0))
         for color, pdata in sorted_players:
@@ -197,10 +260,6 @@ class Renderer:
                 # 狀態疊加：不論是圓形或精靈圖，都疊加緩速環
                 if pdata.get("debuff") or pdata.get("spike"):
                     pygame.draw.circle(self.screen, (200, 100, 255), (px, py), radius + 2, 2)
-
-            # 玩家顏色標籤（顯示在角色下方）
-            label = self.font.render(color[:1].upper(), True, rgb)
-            self.screen.blit(label, (px - label.get_width() // 2, py + radius + 2))
 
         # 3. 繪製 Pac-Man（黃色圓形）
         if pacman:
