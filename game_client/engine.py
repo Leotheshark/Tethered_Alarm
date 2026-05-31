@@ -104,6 +104,7 @@ class GameEngine:
         self._pending_teammate_events = [] # 來自背景執行緒的斷線事件佇列
         self._bgm_faded = False            # 標記當前遊戲 BGM 是否已觸發淡出
         self._last_clear_stage = 0         # 記錄上一次偵測到的通關動畫階段
+        self._last_start_stage = 0         # 記錄上一次偵測到的開場動畫階段
         self._is_blind_muffled = False     # 是否處於致盲音量模式
         self._local_disconnected = False   # 本機自己是否與 server 斷線（由 network 回呼設定）
 
@@ -363,6 +364,7 @@ class GameEngine:
                 
                 self._bgm_faded = False
                 self._last_clear_stage = 0
+                self._last_start_stage = 0
                 print(f"[Engine] minigame started: {game_name}")
             else:
                 print(f"[Engine] unknown minigame: {game_name}")
@@ -464,6 +466,17 @@ class GameEngine:
                         self.sound_manager.play("swoosh_out")
                     
                     self._last_clear_stage = curr_stage
+
+                # 監測開場動畫階段切換，播放對應音效
+                start_stage = getattr(self.active_game, "start_anim_stage", 0)
+                if start_stage != self._last_start_stage:
+                    if start_stage == 2:
+                        self.sound_manager.play("swoosh_in")
+                    elif start_stage == 3:
+                        self.sound_manager.play("stamp")
+                    elif start_stage == 4:
+                        self.sound_manager.play("swoosh_out")
+                    self._last_start_stage = start_stage
 
                 # 定期廣播本地玩家在小遊戲中的位置（讓隊友看到自己）
                 self._game_sync_timer += dt

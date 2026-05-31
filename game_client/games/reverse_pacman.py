@@ -85,7 +85,7 @@ _FALLBACK_DESIRED_STATIONS = {
 
 # ─── 遊戲數值常數 ─────────────────────────────────────────────────────────────
 # PLAYER_SPEED 由 entities.py 提供，確保與 Ghost 預設速度一致
-PACMAN_BASE_SPEED   = 0   # Pac-Man 起始基礎速度（會隨時間升級）
+PACMAN_BASE_SPEED   = 100   # Pac-Man 起始基礎速度（會隨時間升級）
 PACMAN_BOOST_MULT   = 1.5
 CATCH_RADIUS        = 56
 RESCUE_RADIUS       = 70
@@ -376,6 +376,9 @@ class ReversePacman(BaseLogicInterface):
         # 本地玩家輸入向量（由 handle_event 設定）
         self._input_dx = 0
         self._input_dy = 0
+        
+        self.start_anim_stage = 1
+        self.start_anim_timer = 0.0
 
     # ─────────────────────────────────────────────────────────────────────
     # BaseLogicInterface 生命週期方法
@@ -426,6 +429,9 @@ class ReversePacman(BaseLogicInterface):
         self._local_voted = False
         self._input_dx = 0
         self._input_dy = 0
+        self.start_anim_stage = 1
+        self.start_anim_timer = 0.0
+        self.is_input_locked = True
         print("[ReversePacman] game started (charge mode)")
 
     def on_exit(self):
@@ -468,6 +474,28 @@ class ReversePacman(BaseLogicInterface):
         if not self.is_active or self._failed:
             return
         
+        # 開場動畫邏輯
+        if getattr(self, "start_anim_stage", 0) > 0 and self.start_anim_stage < 5:
+            self.start_anim_timer += dt
+            if self.start_anim_stage == 1 and self.start_anim_timer >= 1.0:
+                self.start_anim_stage = 2
+                self.start_anim_timer = 0.0
+            elif self.start_anim_stage == 2 and self.start_anim_timer >= 0.3:
+                self.start_anim_stage = 3
+                self.start_anim_timer = 0.0
+            elif self.start_anim_stage == 3 and self.start_anim_timer >= 1.5:
+                self.start_anim_stage = 4
+                self.start_anim_timer = 0.0
+            elif self.start_anim_stage == 4 and self.start_anim_timer >= 0.3:
+                self.start_anim_stage = 5
+                self.start_anim_timer = 0.0
+                self.is_input_locked = False
+            
+            # 開場期間仍需更新動畫影格（讓角色不會卡在呆板的姿勢）
+            for p in self.players.values():
+                p.update(dt)
+            return
+
         # 推進通關動畫狀態機
         self._update_clear_animation(dt)
         if super().is_cleared():
@@ -587,6 +615,7 @@ class ReversePacman(BaseLogicInterface):
             "fog_active":  bool(local and local.fog_timer > 0 and self.clear_anim_stage == 0),
             "fog_radius":  FOG_VISION_RADIUS,
             "clear_anim":  self._get_clear_anim_data(),
+            "start_anim":  {"stage": getattr(self, "start_anim_stage", 0), "timer": getattr(self, "start_anim_timer", 0.0)},
             "pacmen": [
                 {"x": pm.x, "y": pm.y, "avatar_size": pm.avatar_size}
                 for pm in self.pacmen

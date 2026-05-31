@@ -123,6 +123,10 @@ class DodgeKnives(BaseLogicInterface):
         self._input_dx = 0
         self._input_dy = 0
         self._rescuing_target = None
+        
+        self.start_anim_stage = 1
+        self.start_anim_timer = 0.0
+        self.is_input_locked = True
 
     def on_enter(self, params: dict = None):
         super().on_enter(params)
@@ -142,6 +146,9 @@ class DodgeKnives(BaseLogicInterface):
             p.is_alive = True
             p.visual_key = f"{p.color_key}_{p.direction}"
         self._cleared = False
+        self.start_anim_stage = 1
+        self.start_anim_timer = 0.0
+        self.is_input_locked = True
         print("[DodgeKnives] game entered")
 
     def on_exit(self):
@@ -156,6 +163,28 @@ class DodgeKnives(BaseLogicInterface):
 
     def update(self, dt: float):
         if not self.is_active: return
+
+        # 開場動畫邏輯
+        if getattr(self, "start_anim_stage", 0) > 0 and self.start_anim_stage < 5:
+            self.start_anim_timer += dt
+            if self.start_anim_stage == 1 and self.start_anim_timer >= 1.0:
+                self.start_anim_stage = 2
+                self.start_anim_timer = 0.0
+            elif self.start_anim_stage == 2 and self.start_anim_timer >= 0.3:
+                self.start_anim_stage = 3
+                self.start_anim_timer = 0.0
+            elif self.start_anim_stage == 3 and self.start_anim_timer >= 1.5:
+                self.start_anim_stage = 4
+                self.start_anim_timer = 0.0
+            elif self.start_anim_stage == 4 and self.start_anim_timer >= 0.3:
+                self.start_anim_stage = 5
+                self.start_anim_timer = 0.0
+                self.is_input_locked = False
+            
+            # 開場期間仍需更新動畫影格（讓角色不會卡在呆板的姿勢）
+            for p in self.players.values():
+                p.update(dt)
+            return
 
         # 更新通關動畫計時器
         self._update_clear_animation(dt)
@@ -212,6 +241,7 @@ class DodgeKnives(BaseLogicInterface):
             "tile_map": self.tile_map,
             "tile_size": TILE_SIZE,
             "clear_anim": self._get_clear_anim_data(),
+            "start_anim": {"stage": getattr(self, "start_anim_stage", 0), "timer": getattr(self, "start_anim_timer", 0.0)},
             "buttons": [
                 {
                     "x": b.x, "y": b.y, 
