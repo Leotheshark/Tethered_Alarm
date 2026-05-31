@@ -23,6 +23,9 @@ class GameNetwork:
         self.room_id = room_id
         self.player_id = None    # 連線後由 socket SID 決定
         self.player_color = player_color # 從 Lobby 繼承而來的顏色
+        # 是否為本局權威端（Pac-Man AI / 通關判定）。由 server 在 start_minigame 的 roster
+        # 指定，engine 收到後寫入；小遊戲讀此值，不再各自用顏色硬猜。
+        self.is_authority = False
 
         # 建立可自動重連的 Socket.IO client，避免 server 比 game_client 晚啟動時直接失敗。
         self.sio = socketio.Client(
@@ -69,22 +72,30 @@ class GameNetwork:
         """連上 server 後，記錄自身 player_id 並請求綁定房間。"""
         self.player_id = self.sio.sid
         print("[GameNetwork] connected, SID:", self.sio.sid)
+        # 通知 engine 清除「連線中斷」提示（涵蓋首次連線與自動重連成功）
+        if hasattr(self.engine, "on_connection_changed"):
+            self.engine.on_connection_changed(True)
         try:
-            # 若啟動時已由環境變數指定 ROOM_ID，直接訂閱該房間。
+            # 若啟動時已由環境變數指定 ROOM_ID（正式流程的常態），直接帶著大廳繼承的
+            # 顏色訂閱該房間即可。此時「不」再發 request_game_room——否則 server 會回
+            # assign_room 觸發 change_room 再訂閱一次，而那次沒帶顏色，導致 server 走
+            # fallback 計數器重發顏色，造成同一 client 拿到兩個顏色、顏色錯亂。
             if self.room_id != "default":
-                # 主動向伺服器申報我在大廳取得的顏色
                 self.sio.emit("subscribe_game_room", {"room_id": self.room_id, "player_color": self.player_color})
                 print(f"[GameNetwork] subscribing to configured room: {self.room_id}")
-
-            # 若沒有指定房間，請 server 指派一個已滿員、等待鬧鐘流程的房間。
-            self.sio.emit("request_game_room", {})
-            print("[GameNetwork] requested an active game room")
+            else:
+                # 沒指定房間（debug 直連）：請 server 指派一個已滿員、等待鬧鐘流程的房間。
+                self.sio.emit("request_game_room", {})
+                print("[GameNetwork] requested an active game room")
         except Exception as e:
             print(f"[GameNetwork] room subscription error: {e}")
 
     def _on_disconnect(self):
-        """連線中斷時只記錄狀態；socketio client 會依設定自動重連。"""
+        """連線中斷時記錄狀態並通知 engine 顯示提示；socketio client 會依設定自動重連。"""
         print("[GameNetwork] disconnected")
+        # 通知 engine 顯示「連線中斷」提示，讓玩家知道畫面停止同步是斷線而非當機
+        if hasattr(self.engine, "on_connection_changed"):
+            self.engine.on_connection_changed(False)
 
     def _on_assign_room(self, data):
         """server 指派房間後，正式訂閱該 room 的廣播事件。"""
@@ -108,7 +119,9 @@ class GameNetwork:
     def change_room(self, room_id):
         """切換 game_client 目前監聽的房間。"""
         try:
-            self.sio.emit("subscribe_game_room", {"room_id": room_id})
+            # 一律帶上目前顏色：否則 server 收到無色訂閱會走計數器 fallback 重新指派，
+            # 造成同一 client 拿到兩個顏色、座位與權威判定分歧。
+            self.sio.emit("subscribe_game_room", {"room_id": room_id, "player_color": self.player_color})
             self.room_id = room_id
             print(f"[GameNetwork] subscribing to game room: {room_id}")
         except Exception as e:
@@ -138,7 +151,9 @@ class GameNetwork:
 
     def send_position(self, x, y, dx, dy):
         """廣播本地玩家的當前位置與移動方向給同房其他人。"""
-        if not self.player_id or not self.room_id:
+        # 未連線時直接略過：斷線後 Pygame 主迴圈仍每幀呼叫此方法，
+        # 若硬送會對已斷的 namespace 不斷拋錯洗版 log。
+        if not self.sio.connected or not self.player_id or not self.room_id:
             return
         try:
             self.sio.emit("player_move", {
@@ -179,7 +194,8 @@ class GameNetwork:
 
     def send_game_event(self, payload: dict):
         """廣播小遊戲內的即時事件封包給同房其他人。"""
-        if not self.room_id:
+        # 未連線時略過，理由同 send_position（避免斷線後洗版式拋錯）。
+        if not self.sio.connected or not self.room_id:
             return
         try:
             self.sio.emit("game_event", {**payload, "room_id": self.room_id})
@@ -188,6 +204,8 @@ class GameNetwork:
 
     def send_surrender(self):
         """發送投降事件給伺服器。"""
+        if not self.sio.connected:
+            return
         try:
             self.sio.emit("surrender", {"room_id": self.room_id})
         except Exception as e:
@@ -195,6 +213,8 @@ class GameNetwork:
 
     def send_ready(self, is_ready=True):
         """保留給未來 Pygame 端直接送出 ready/unready 狀態時使用。"""
+        if not self.sio.connected:
+            return
         try:
             event = "player_ready" if is_ready else "player_unready"
             self.sio.emit(event, {"room_id": self.room_id})

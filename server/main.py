@@ -28,6 +28,7 @@ class ServerState:
         self.colors = ["blue", "green", "pink", "red"]
         self.alarm_updated_event = asyncio.Event()
         self.timeout_tasks = {}  # { (room_id, color): asyncio.Task }，追蹤斷線倒數任務
+        self.uvicorn_server = None  # 持有 uvicorn.Server 以便退出時請求優雅關閉並釋放 5555 埠
 
         # 音效資源路徑
         self.bgm_path = os.path.join(base_dir, "..", "game_client", "assets", "sounds", "bgm_loop.ogg")
@@ -145,6 +146,15 @@ async def disconnect(sid):
         break
 
 
+def _is_room_member(room, sid):
+    """判斷 sid 是否真的屬於該房（lobby 玩家或已訂閱的 game_client）。
+    用於房間範疇事件的發送者驗證：阻止任意連線者（含帶錯 room_id 的 debug client）
+    對不屬於自己的房間結束遊戲、注入偽造的位置/狀態封包。"""
+    if room is None:
+        return False
+    return sid in room.players or sid in room.game_client_sids
+
+
 async def _teammate_timeout(room_id, color):
     """60 秒後若隊友仍未重連，廣播 teammate_timeout 允許投降。"""
     await asyncio.sleep(60)
@@ -243,6 +253,7 @@ async def alarm_monitor():
 
                 if -30 < diff <= 59: # TODO: 記得改回來
                     print(f"[alarm] trigger room {room_id} at {room.alarm_time}")
+                    room.is_triggered = True
                     await sio.emit(ServerEvent.ALARM_TRIGGERED, {"time": room.alarm_time}, room=room_id)
                     room.alarm_time = None
             except Exception as e:
@@ -268,7 +279,7 @@ async def set_alarm(sid, data):
     if not room:
         return
 
-    if room.host_sid == sid and len(room.players) == room.max_players:
+    if room.host_sid == sid and len(room.players) == room.max_players and not room.is_triggered:
         room.alarm_time = time_str
         state.alarm_updated_event.set()
         await sio.emit(ServerEvent.ALARM_SET, {"time": time_str}, room=room_id)
@@ -294,31 +305,43 @@ async def test_alarm_sound(sid, data=None):
 async def start_game(sid, data):
     """倒數結束後由 lobby 通知同房間所有 client 進入遊戲，並指定要載入的小遊戲。"""
     room_id = data.get("room_id")
-    if room_id in state.rooms:
-        await sio.emit(ServerEvent.GAME_STARTED, {}, room=room_id)
+    room = state.rooms.get(room_id)
+    if room:
         # 隨機或固定選擇小遊戲；目前固定為 reverse_pacman
-        await sio.emit(
-            ServerEvent.START_MINIGAME,
-            {"game": "reverse_pacman"},
-            room=room_id,
-        )
+        minigame = "reverse_pacman"
+        # 只記錄要玩的小遊戲，並重置派發旗標；此時 game_client 進程尚未啟動，
+        # 真正的 START_MINIGAME（含權威玩家名單）延後到 4 個 game_client 都訂閱後
+        # 由 _maybe_dispatch_minigame 統一派發一次，確保各 client 拿到一致的名單。
+        room.current_minigame = minigame
+        room.minigame_dispatched = False
+
+        # GAME_STARTED 仍立即廣播：lobby 前端需要它來停鬧鐘、開遊戲視窗（launch game_client）。
+        await sio.emit(ServerEvent.GAME_STARTED, {}, room=room_id)
 
 @sio.event
 async def game_cleared(sid, data):
-    """小遊戲通關時，由 game_client 通知伺服器。"""
+    """小遊戲通關時，由同房 game_client 通知伺服器。"""
     room_id = data.get("room_id")
-    if room_id:
-        print(f"[server] game cleared in {room_id}")
-        # 廣播給房間所有人（包含大廳），理由為成功
-        await sio.emit(ServerEvent.GAME_OVER, {"reason": "success"}, room=room_id)
+    room = state.rooms.get(room_id)
+    # 發送者驗證：只有該房成員能宣告通關，阻止外部端結束不屬於自己的房間。
+    if not _is_room_member(room, sid):
+        return
+    print(f"[server] game cleared in {room_id}")
+    # 廣播給房間所有人（包含大廳），理由為成功
+    await sio.emit(ServerEvent.GAME_OVER, {"reason": "success"}, room=room_id)
+    # 重置回大廳可重玩狀態，並重廣播 room_state 讓前端刷新（解除 isBusy → 房主可再設鬧鐘）
+    room.reset_for_lobby()
+    await sio.emit(ServerEvent.ROOM_STATE, room.get_state(), room=room_id)
 
 
 @sio.event
 async def game_event(sid, data):
     """轉發小遊戲內的即時事件封包給同房其他所有 game_client（排除發送者）。"""
     room_id = data.get("room_id")
-    if room_id:
-        await sio.emit(ServerEvent.GAME_EVENT, data, room=room_id, skip_sid=sid)
+    # 發送者驗證：只轉發來自該房成員的封包，阻止外部端注入偽造的遊戲狀態。
+    if not _is_room_member(state.rooms.get(room_id), sid):
+        return
+    await sio.emit(ServerEvent.GAME_EVENT, data, room=room_id, skip_sid=sid)
 
 
 # --- Game client 房間訂閱流程 ---
@@ -354,16 +377,61 @@ async def subscribe_game_room(sid, data):
 
     await sio.enter_room(sid, room_id)
 
-    # 優先使用客戶端申報的顏色（來自大廳繼承），若無則使用計數器（相容除錯模式）
-    color = data.get("player_color")
-    if not color:
-        color = state.colors[room.game_client_count % len(state.colors)]
-        room.game_client_count += 1
+    # 顏色決策優先序：
+    # 1) 同一 sid 重訂閱（重連 / change_room）→ 沿用既有顏色，絕不重新指派或遞增計數器，
+    #    否則同一 client 會拿到兩個顏色、座位與權威判定分歧。
+    # 2) 客戶端申報的顏色（來自大廳繼承）。
+    # 3) 都沒有 → 用計數器依序指派（相容 debug 直連模式）。
+    if sid in room.game_client_sids:
+        color = room.game_client_sids[sid]
+    else:
+        color = data.get("player_color")
+        if not color:
+            color = state.colors[room.game_client_count % len(state.colors)]
+            room.game_client_count += 1
 
     room.game_client_sids[sid] = color
 
     await sio.emit(ServerEvent.GAME_ROOM_SUBSCRIBED, {"room_id": room_id, "player_color": color}, to=sid)
     print(f"[game_client] {sid} subscribed to room {room_id} as {color}")
+
+    # 每次有 game_client 訂閱後，檢查是否該派發 minigame（湊滿才發，且只發一次）。
+    await _maybe_dispatch_minigame(room)
+
+
+def _ordered_game_client_roster(room):
+    """
+    產出房間內 game_client 的權威名單，依顏色固定順序（blue→green→pink→red）排序。
+    client 端用這份名單建立一致的 player_id_list，避免各自靠 presence 心跳猜而分歧。
+    名單第一位（依顏色順序為 blue）標記 authority=True，作為 Pac-Man AI / 通關判定的
+    權威端來源；client 不再各自用「顏色==blue」硬猜，避免重連或缺色時授權錯配。
+    """
+    color_rank = {"blue": 0, "green": 1, "pink": 2, "red": 3}
+    roster = [{"sid": sid, "color": color} for sid, color in room.game_client_sids.items()]
+    roster.sort(key=lambda e: (color_rank.get(e["color"], 99), e["sid"]))
+    for i, entry in enumerate(roster):
+        entry["authority"] = (i == 0)  # 排序後第一位為唯一授權端
+    return roster
+
+
+async def _maybe_dispatch_minigame(room):
+    """
+    當本局已選定小遊戲、且 4 個 game_client 都已訂閱時，對全房派發一次 START_MINIGAME，
+    並夾帶權威玩家名單。只派發一次（minigame_dispatched 旗標），確保各 client 同步且一致。
+    """
+    if not room.current_minigame or room.minigame_dispatched:
+        return
+    if len(room.game_client_sids) < room.max_players:
+        return  # 尚未湊滿全部 game_client，繼續等下一個訂閱
+
+    room.minigame_dispatched = True
+    roster = _ordered_game_client_roster(room)
+    await sio.emit(
+        ServerEvent.START_MINIGAME,
+        {"game": room.current_minigame, "players": roster},
+        room=room.room_id,
+    )
+    print(f"[game_client] dispatched start_minigame ({room.current_minigame}) with roster: {roster}")
 
 
 # --- 玩家位置同步 ---
@@ -371,18 +439,26 @@ async def subscribe_game_room(sid, data):
 async def player_move(sid, data):
     """接收玩家位置封包並轉發給同房其他所有 game_client（排除發送者）。"""
     room_id = data.get("room_id")
-    if room_id:
-        await sio.emit(ServerEvent.PLAYER_MOVE, data, room=room_id, skip_sid=sid)
+    # 發送者驗證：只轉發來自該房成員的位置封包，阻止外部端注入偽造座標。
+    if not _is_room_member(state.rooms.get(room_id), sid):
+        return
+    await sio.emit(ServerEvent.PLAYER_MOVE, data, room=room_id, skip_sid=sid)
 
 
 # --- 投降流程 ---
 @sio.event
 async def surrender(sid, data):
-    """任一玩家選擇投降，廣播 game_over 給同房所有人。"""
+    """同房成員選擇投降，廣播 game_over 給同房所有人。"""
     room_id = data.get("room_id")
-    if room_id:
-        print(f"[server] surrender from {sid} in {room_id}")
-        await sio.emit(ServerEvent.GAME_OVER, {"reason": "surrender"}, room=room_id)
+    room = state.rooms.get(room_id)
+    # 發送者驗證：只有該房成員能結束本局，阻止任意連線者投降掉不屬於自己的房間。
+    if not _is_room_member(room, sid):
+        return
+    print(f"[server] surrender from {sid} in {room_id}")
+    await sio.emit(ServerEvent.GAME_OVER, {"reason": "surrender"}, room=room_id)
+    # 重置回大廳可重玩狀態，並重廣播 room_state 讓前端刷新（解除 isBusy → 房主可再設鬧鐘）
+    room.reset_for_lobby()
+    await sio.emit(ServerEvent.ROOM_STATE, room.get_state(), room=room_id)
 
 
 # --- 啟動與視窗管理 ---
@@ -413,8 +489,15 @@ def launch_game_client(room_id="default", server_url="http://127.0.0.1:5555", co
 
 
 def run_server():
-    """在背景執行 Socket.IO ASGI server。"""
-    uvicorn.run(app, host="0.0.0.0", port=5555, log_level="error")
+    """在背景執行 Socket.IO ASGI server。
+
+    持有 uvicorn.Server 物件（存入 state.uvicorn_server），讓退出時能請求優雅關閉、
+    確實釋放 5555 埠，而不是靠 os._exit 硬殺、留下埠被殘留 socket 鎖住的風險。
+    """
+    config = uvicorn.Config(app, host="0.0.0.0", port=5555, log_level="error")
+    server = uvicorn.Server(config)
+    state.uvicorn_server = server
+    server.run()
 
 
 class LobbyAPI:
@@ -489,6 +572,34 @@ def start_window():
     webview.start(debug=False)
 
 
+def cleanup():
+    """退出前主動釋放關鍵資源，避免反覆開關時殘留導致下次啟動失敗。
+
+    依序處理影響面最大的三項：
+      1. 音訊引擎（pygame.mixer）：不 quit 會殘留佔用音訊裝置，下次 init 可能失敗。
+      2. uvicorn server：請求優雅關閉以釋放 5555 埠，避免下次綁定撞 WinError 10048。
+      3. 防休眠狀態：還原系統電源行為。
+    每一步各自 try/except，確保一項失敗不影響其餘清理。
+    """
+    try:
+        pygame.mixer.quit()
+        print("[server] pygame.mixer released")
+    except Exception as e:
+        print(f"[server] mixer cleanup failed: {e}")
+
+    try:
+        if state.uvicorn_server is not None:
+            state.uvicorn_server.should_exit = True  # 通知 uvicorn 主迴圈優雅收尾
+            print("[server] requested uvicorn shutdown")
+    except Exception as e:
+        print(f"[server] uvicorn shutdown request failed: {e}")
+
+    try:
+        SystemHelper.restore_sleep()
+    except Exception as e:
+        print(f"[server] restore_sleep failed: {e}")
+
+
 if __name__ == "__main__":
     # 1. 系統準備：防止休眠
     SystemHelper.prevent_sleep()
@@ -504,7 +615,13 @@ if __name__ == "__main__":
         time.sleep(1.0)
 
     print("[server] opening lobby window...")
-    start_window()
-
-    SystemHelper.restore_sleep()
-    os._exit(0)
+    try:
+        start_window()  # 阻塞直到 lobby 視窗關閉
+    finally:
+        # 不論正常關閉或例外，都先釋放資源再退出。
+        cleanup()
+        # 給 uvicorn 一點時間完成優雅關閉、釋放埠（daemon thread 不會擋退出）。
+        time.sleep(0.5)
+        # 仍以 os._exit 作最後保證：pygame/webview 殘留執行緒可能讓正常 exit 卡住不結束；
+        # 但關鍵資源（音訊裝置、5555 埠）已於 cleanup() 主動釋放，不再靠硬殺善後。
+        os._exit(0)

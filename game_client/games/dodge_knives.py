@@ -105,8 +105,9 @@ class DodgeKnives(BaseLogicInterface):
         super().__init__(socket_client, player_id_list)
         self.local_color = socket_client.player_color
         self.local_pid = socket_client.player_id
-        # 統一使用顏色作為權限判定
-        self.is_authority = (self.local_color == "blue")
+        # 採用 network 的單一真值源（server roster 指定；debug 路徑由 engine 以顏色 fallback 設好），
+        # 不再自行用顏色硬猜，避免重連/缺色時授權錯配。
+        self.is_authority = bool(getattr(socket_client, "is_authority", self.local_color == "blue"))
 
         self.tile_map = [row[:] for row in MAP_LAYOUT]
         self.buttons = []

@@ -4,7 +4,7 @@ import math
 
 from sync_helpers import RemoteSyncState, apply_server_update, tick_remote_sync
 
-PLAYER_SPEED = 400  # Ghost 預設移動速度（像素/秒），小遊戲可 import 此常數共用
+PLAYER_SPEED = 360  # Ghost 預設移動速度（像素/秒），小遊戲可 import 此常數共用
 
 class Entity:
     """
@@ -61,7 +61,7 @@ class Ghost(Entity):
         # 1x2 動畫屬性
         self.frame_index = 0
         self.animation_timer = 0.0
-        self.animation_speed = 0.15  # 每 0.15 秒切換一次影格
+        self.animation_speed = 0.3  # 每 0.3 秒切換一次影格
 
     def move(self, dx, dy, dt, tile_size=32, is_wall_cb=None, others=None):
         """

@@ -67,6 +67,7 @@ class GameEngine:
         self.sound_manager.set_master_volume(0.5)
 
         self.renderer = None  # 視窗建立後才初始化渲染器
+        self.network = None   # 關鍵修正：先定義屬性為 None，防止背景執行緒回呼時噴出 AttributeError
         self.game_window_shown = False
         
         # Socket.IO 回呼在背景執行緒觸發，用旗標讓主迴圈在主執行緒安全執行 Pygame 操作
@@ -74,6 +75,7 @@ class GameEngine:
         self._pending_stop_alarm = False
         self._pending_play_alarm = False
         self._pending_remote_updates = []  # 遠端位置封包佇列（背景執行緒寫入，主迴圈消費）
+        self._pending_caption_update = False # 標題更新旗標，確保執行緒安全
 
         # 優先讀取環境變數中的顏色（由 Lobby 傳入），否則預設藍色
         initial_color = os.environ.get('PLAYER_COLOR', 'blue')
@@ -88,10 +90,12 @@ class GameEngine:
         self._show_surrender_ui = False    # 是否顯示投降按鈕
         self._game_over = False
         self._pending_teammate_events = [] # 來自背景執行緒的斷線事件佇列
+        self._local_disconnected = False   # 本機自己是否與 server 斷線（由 network 回呼設定）
 
         # 小遊戲狀態
         self.active_game = None            # 目前正在運行的 BaseLogicInterface 實例
         self._pending_minigame = None      # 背景執行緒設定的待啟動遊戲名稱
+        self._pending_minigame_roster = None  # server 派發的權威玩家名單 [{sid, color}, ...]
         self._pending_game_events = []     # 來自背景執行緒的小遊戲事件佇列
         self._game_sync_timer = 0.0        # 玩家位置同步至小遊戲的計時器
         self._GAME_SYNC_INTERVAL = 0.05    # 每 50ms 廣播一次小遊戲玩家位置
@@ -123,6 +127,8 @@ class GameEngine:
         self.player.color_key = color
         self.player.visual_key = f"{color}_{self.player.direction}"
         print(f"[Engine] player color assigned: {color}")
+        # 僅設定旗標，由主執行緒在 _flush_pending 中更新 UI，防止背景執行緒操作 Pygame 導致崩潰
+        self._pending_caption_update = True
 
     def on_player_moved(self, data):
         """由 GameNetwork 回呼（背景執行緒）：將遠端封包放入佇列，交主迴圈處理。"""
@@ -140,12 +146,28 @@ class GameEngine:
         """遊戲結束（背景執行緒）。"""
         self._pending_teammate_events.append(("game_over", data))
 
+    def on_connection_changed(self, connected: bool):
+        """本機與 server 的連線狀態改變（背景執行緒）。
+        只設定一個 bool 旗標（原子操作，執行緒安全），由主迴圈渲染時讀取顯示提示。"""
+        self._local_disconnected = not connected
+
     def on_start_minigame(self, data):
-        """伺服器通知要載入哪個小遊戲（背景執行緒）。"""
-        self._pending_minigame = data.get("game")
+        """伺服器通知要載入哪個小遊戲（背景執行緒）。
+        data 夾帶 server 派發的權威玩家名單 players=[{sid, color, authority}, ...]，
+        所有 client 共用同一份，確保 player_id_list 一致、authority 判定不分歧。"""
         game_name = data.get("game")
-        print(f"[Debug] 收到小遊戲啟動通知: {game_name}")
         self._pending_minigame = game_name
+        roster = data.get("players")
+        self._pending_minigame_roster = roster
+        # 由 server 名單決定本機是否為權威端。用「顏色」配對而非 sid：client 端的 socket sid
+        # 與 server session id 不保證相同（python-socketio 兩端 sid 來源不同），而顏色在房內唯一，
+        # 是穩定可靠的對位鍵。取代「顏色==blue」硬猜：重連或缺色時也不會授權錯配。
+        if roster:
+            my_color = self.network.player_color
+            self.network.is_authority = any(
+                e.get("color") == my_color and e.get("authority") for e in roster
+            )
+        print(f"[Debug] 收到小遊戲啟動通知: {game_name}, authority={self.network.is_authority}, roster={roster}")
 
     def on_game_event(self, data):
         """接收小遊戲即時事件（背景執行緒）。"""
@@ -185,6 +207,9 @@ class GameEngine:
         else:
             self.screen = pygame.display.set_mode((1920, 1080), pygame.FULLSCREEN | pygame.SCALED)
         caption = os.environ.get('DEBUG_TITLE', 'Co-up: Tethered Alarm')
+        # 若已指派顏色則顯示在標題
+        if self.network and self.network.player_color: # 增加安全檢查，確保 network 已實例化
+            caption = f"{caption} (Init: {self.network.player_color})"
         pygame.display.set_caption(caption)
         self.renderer = Renderer(self.screen)
         self.game_window_shown = True
@@ -197,24 +222,45 @@ class GameEngine:
                 VisualRegistry.load_image(f"{c}_{s}", f"{c}_{s}.png")
         VisualRegistry.load_image("dead", "dead.png")
 
+    def _is_minigame_ready(self):
+        """
+        判斷現在是否可安全啟動小遊戲。
+
+        server 已保證「4 個 game_client 都訂閱後」才派發 start_minigame，並夾帶權威玩家
+        名單（_pending_minigame_roster）。因此只要拿到該名單、且本地連線與顏色就緒即可啟動，
+        不再靠 presence 心跳猜人數（那會因 client 啟動時間差而名單殘缺、各玩各的瞬間通關）。
+        """
+        if self.network.player_color is None or not self.network.player_id:
+            return False
+        # 正式流程：等 server 的權威名單到手才啟動
+        if self._pending_minigame_roster:
+            return True
+        # 相容 DEBUG_MINIGAME（本地直接設旗標、無 server 名單）：連線與顏色就緒即可
+        return True
+
     def _build_ordered_player_id_list(self):
-        """所有 client 對 player_id_list 達成共識：按 server 指派的顏色順序排序，
-        缺顏色的（還沒收到 game_room_subscribed）排在最後並依 sid 排序。"""
+        """
+        產出 player_id_list。優先採用 server 派發的權威名單（_pending_minigame_roster），
+        確保所有 client 拿到完全一致的順序；缺名單時（DEBUG_MINIGAME）退回本地推算。
+        """
+        roster = self._pending_minigame_roster
+        if roster:
+            # server 已依顏色順序排好，直接取 sid
+            return [entry["sid"] for entry in roster if entry.get("sid")]
+
+        # ── 退回路徑：無 server 名單（DEBUG_MINIGAME 等）時，用本地資訊推算 ──
         color_order = {"blue": 0, "green": 1, "pink": 2, "red": 3}
         entries = []
-        # 本地玩家
         if self.network.player_id:
             entries.append((self.player.color_key, self.network.player_id))
         else:
             print("[Debug] 建立名單失敗: network.player_id 為空")
-        # 遠端玩家
         for pid, ghost in self.remote_ghosts.items():
             entries.append((ghost.color_key, pid))
 
         def sort_key(item):
             color, pid = item
-            rank = color_order.get(color, 99)
-            return (rank, pid or "")
+            return (color_order.get(color, 99), pid or "")
 
         entries.sort(key=sort_key)
         return [pid for _color, pid in entries]
@@ -227,6 +273,9 @@ class GameEngine:
             if present >= self._debug_required_players:
                 print(f"[Engine] DEBUG_MINIGAME: 人數已達 {present}/{self._debug_required_players}，啟動 {self._debug_minigame_name}")
                 self._pending_minigame = self._debug_minigame_name
+                # 此路徑無 server roster，以顏色 fallback 設定權威端（藍色），
+                # 確保仍有唯一 authority 推進 AI 與通關判定。
+                self.network.is_authority = (self.network.player_color == "blue")
                 self._debug_minigame_pending = False
             else:
                 self._debug_wait_log_timer += 1
@@ -246,6 +295,13 @@ class GameEngine:
         if self._pending_stop_alarm:
             self._pending_stop_alarm = False
             self.sound_manager.stop(channel_name='alarm', fade_ms=500)
+
+        # 消費標題更新請求 (執行緒安全更新)
+        if self._pending_caption_update and self.game_window_shown:
+            self._pending_caption_update = False
+            base_title = os.environ.get('DEBUG_TITLE', 'Player')
+            color = self.network.player_color if self.network else "unknown"
+            pygame.display.set_caption(f"{base_title} (Assigned: {color})")
 
         # 消費斷線事件佇列
         while self._pending_teammate_events:
@@ -272,9 +328,11 @@ class GameEngine:
         # 消費小遊戲啟動請求：在主執行緒安全地實例化並啟動遊戲
         if self._pending_minigame:
             game_name = self._pending_minigame
-            # 若尚未取得伺服器分配的顏色，延後啟動，防止 is_authority 判定錯誤
-            if self.network.player_color is None:
-                return
+
+            # 啟動就緒守衛：未就緒就延後到下一幀重試，
+            # 避免在 socket 未連上時用殘缺的 player_id_list 建立遊戲而卡在地圖中心。
+            if not self._is_minigame_ready():
+                return  # 保留 _pending_minigame 旗標，下一幀再檢查
 
             self._pending_minigame = None
             game_cls = _MINIGAME_CLASSES.get(game_name)
@@ -287,6 +345,7 @@ class GameEngine:
                 print(f"[Engine] minigame started: {game_name}")
             else:
                 print(f"[Engine] unknown minigame: {game_name}")
+            self._pending_minigame_roster = None  # 已用完，清掉避免影響下一局
 
         # 消費小遊戲事件佇列：轉發給活躍的小遊戲實例
         while self._pending_game_events:
@@ -337,6 +396,22 @@ class GameEngine:
                         pygame.display.toggle_fullscreen()
                     if event.key == pygame.K_s and self._show_surrender_ui:
                         self.network.send_surrender()
+                    # 失敗投票階段：保留 Y=繼續、N=放棄 的鍵盤快捷（與滑鼠點擊並存）
+                    if self.active_game and getattr(self.active_game, "is_voting", False):
+                        if event.key == pygame.K_y:
+                            self.active_game.handle_event({"type": "vote", "value": True})
+                        elif event.key == pygame.K_n:
+                            self.active_game.handle_event({"type": "vote", "value": False})
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    # 失敗投票階段：左鍵點擊按鈕投票（命中測試用 renderer 畫出的按鈕區域，
+                    # 確保點擊範圍與顯示一致）
+                    if (self.active_game and getattr(self.active_game, "is_voting", False)
+                            and self.renderer is not None):
+                        pos = event.pos
+                        if self.renderer.vote_continue_rect and self.renderer.vote_continue_rect.collidepoint(pos):
+                            self.active_game.handle_event({"type": "vote", "value": True})
+                        elif self.renderer.vote_giveup_rect and self.renderer.vote_giveup_rect.collidepoint(pos):
+                            self.active_game.handle_event({"type": "vote", "value": False})
 
             # E 鍵改用 GetAsyncKeyState 邊緣偵測，與 WASD 一致，避免多視窗 / IME 攔截造成 KEYDOWN 漏接
             rescue_edge = self.input_handler.poll_rescue_edge()
@@ -362,8 +437,10 @@ class GameEngine:
                     if sync_data:
                         try:
                             self.network.send_game_event(sync_data)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # send_game_event 內部已有連線守衛，正常不會到這；真有非預期
+                            # 例外時印一次（非每幀洗版）以保留可觀測性，不再完全靜默吞掉。
+                            print(f"[Engine] send_game_event unexpected error: {e}")
 
                 # 通關判定
                 if self.active_game.is_cleared():
@@ -372,6 +449,19 @@ class GameEngine:
                     print("[Engine] minigame cleared!")
                     # 廣播通關訊息給伺服器，讓大廳視窗恢復
                     self.network.sio.emit("game_cleared", {"room_id": self.network.room_id})
+
+                    # 1. 告訴伺服器取消準備狀態，這會讓大廳 UI 的 Ready 鍵消失/重置
+                    self.network.send_ready(False)
+                    self.network.is_authority = False
+
+                    # 2. 驅動狀態機回到 SETUP (State 0)，讓玩家可以重新設定鬧鐘時間
+                    from states import State
+                    if self.state_machine.transition(State.RESULT):
+                        self.state_machine.transition(State.SETUP)
+
+                    # 如果是偵錯模式，重置旗標以便在大廳再次測試
+                    if os.environ.get('DEBUG_MINIGAME') == '1':
+                        self._debug_minigame_pending = True
             else:
                 # 遊戲大廳/等待模式：使用一般角色移動
                 # 大廳中收集所有遠端玩家的 rect
@@ -406,7 +496,7 @@ class GameEngine:
                 # 一般模式：繪製角色實體
                 self.renderer.draw_world(self.entity_manager)
             self.renderer.draw_ui(self.clock)
-            self.renderer.draw_status_ui(self._disconnected_colors, self._show_surrender_ui)
+            self.renderer.draw_status_ui(self._disconnected_colors, self._show_surrender_ui, self._local_disconnected)
             self.renderer.display()
 
         pygame.quit()
