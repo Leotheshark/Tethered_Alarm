@@ -8,14 +8,16 @@ import renderer
 class BaseLogicInterface:
     """小遊戲的共用介面契約，定義主引擎呼叫的 8 個生命週期方法。"""
 
-    def __init__(self, socket_client, player_id_list):
+    def __init__(self, socket_client, player_id_list, sound_manager):
         """
         初始化遊戲邏輯。
         :param socket_client: GameNetwork 實例，供遊戲廣播封包使用。
         :param player_id_list: 房間內所有玩家 ID 的清單，順序即顏色順序。
+        :param sound_manager: 音效管理器。
         """
         self.socket_client = socket_client
         self.player_id_list = player_id_list
+        self.sound_manager = sound_manager
         self.is_active = False
 
         # 通關動畫狀態機
