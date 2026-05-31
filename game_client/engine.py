@@ -449,6 +449,19 @@ class GameEngine:
                     print("[Engine] minigame cleared!")
                     # 廣播通關訊息給伺服器，讓大廳視窗恢復
                     self.network.sio.emit("game_cleared", {"room_id": self.network.room_id})
+
+                    # 1. 告訴伺服器取消準備狀態，這會讓大廳 UI 的 Ready 鍵消失/重置
+                    self.network.send_ready(False)
+                    self.network.is_authority = False
+
+                    # 2. 驅動狀態機回到 SETUP (State 0)，讓玩家可以重新設定鬧鐘時間
+                    from states import State
+                    if self.state_machine.transition(State.RESULT):
+                        self.state_machine.transition(State.SETUP)
+
+                    # 如果是偵錯模式，重置旗標以便在大廳再次測試
+                    if os.environ.get('DEBUG_MINIGAME') == '1':
+                        self._debug_minigame_pending = True
             else:
                 # 遊戲大廳/等待模式：使用一般角色移動
                 # 大廳中收集所有遠端玩家的 rect

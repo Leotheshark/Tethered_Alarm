@@ -343,7 +343,7 @@ const uiCallbacks = {
         // isBusy 只信任 server 權威狀態 state.alarm_time（鬧鐘設定中才有值，觸發/結束時為 None）。
         // 不再 OR 本地 dataset.triggered 旗標——那是脆弱的競態溫床（曾導致旗標殘留把 alarmClock
         // 鎖死）。dataset.triggered 僅作 onAlarmTriggered 的本地記錄，不參與業務判定。
-        const isBusy = !!state.alarm_time;
+        const isBusy = !!state.alarm_time || state.is_triggered;
         alarmClock.style.cursor = isHost && isFull && !isBusy ? 'pointer' : 'default';
         alarmHint.style.visibility = isFull && !isBusy ? 'visible' : 'hidden';
         if (!isBusy) alarmHint.dataset.triggered = 'false';
@@ -411,6 +411,7 @@ const uiCallbacks = {
         // 重置大廳狀態與 UI 標記
         const alarmHint = document.getElementById('alarm-hint');
         alarmHint.dataset.triggered = 'false';
+        readyButton.style.display = 'none'; // 徹底從畫面上隱藏
         readyButton.disabled = false;
         readyButton.style.opacity = '1.0';
         readyButton.style.cursor = 'pointer';

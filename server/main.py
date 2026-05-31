@@ -253,6 +253,7 @@ async def alarm_monitor():
 
                 if -30 < diff <= 59: # TODO: 記得改回來
                     print(f"[alarm] trigger room {room_id} at {room.alarm_time}")
+                    room.is_triggered = True
                     await sio.emit(ServerEvent.ALARM_TRIGGERED, {"time": room.alarm_time}, room=room_id)
                     room.alarm_time = None
             except Exception as e:
@@ -278,7 +279,7 @@ async def set_alarm(sid, data):
     if not room:
         return
 
-    if room.host_sid == sid and len(room.players) == room.max_players:
+    if room.host_sid == sid and len(room.players) == room.max_players and not room.is_triggered:
         room.alarm_time = time_str
         state.alarm_updated_event.set()
         await sio.emit(ServerEvent.ALARM_SET, {"time": time_str}, room=room_id)

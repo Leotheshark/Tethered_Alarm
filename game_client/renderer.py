@@ -293,8 +293,8 @@ class Renderer:
         if render_data.get("fog_active"):
             self._draw_fog(render_data, players, local_color, ox, oy)
 
-        # 4. HUD：四色蓄能進度條 + 隊伍總進度（取代原本的剩餘 pellet 數）
-        self._draw_charge_hud(render_data)
+        # 4. HUD：原本用於顯示玩家個人蓄能條，現已廢棄（改由地圖上的 ColorButton 顯示）
+        # self._draw_charge_hud(render_data)
 
         # 5. 通關過場動畫 (Clear Animation Overlay)
         #    新版以 _cleared/_failed 旗標結束，暫時不送 clear_anim 資料 → stage 0 靜默不畫；
@@ -382,7 +382,7 @@ class Renderer:
         sw, sh = self.screen.get_size()
         timer = anim.get("timer", 0.0)
 
-        banner_color = (250, 250, 250)
+        banner_color = (255, 255, 255)
         text_color = (255, 50, 50)
 
         banner_x = 0
@@ -459,7 +459,7 @@ class Renderer:
         清晰圓中心採用本地玩家的「螢幕座標」實算（相機在地圖邊緣會夾邊，玩家未必置中）。
         """
         sw, sh = self.screen.get_size()
-        radius = render_data.get("fog_radius", 150)
+        inner_radius = render_data.get("fog_radius", 100) # 核心全亮區半徑
 
         local_p = players.get(local_color)
         if local_p:
@@ -469,46 +469,56 @@ class Renderer:
             cx, cy = sw // 2, sh // 2
 
         overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
-        # 完全不透明的黑幕：圓外「完全看不見」，視野只剩角色周圍一圈（而非單純變暗）
         overlay.fill((0, 0, 0, 255))
-        # 由大到小畫多層遞減 alpha 的圓（pygame.draw 直接覆寫像素，非混色），
-        # 在角色周圍挖出一個帶柔邊的透明洞：洞內全亮、邊緣漸暗、洞外純黑。
-        for alpha, extra in ((210, 55), (160, 40), (100, 25), (45, 12), (0, 0)):
-            pygame.draw.circle(overlay, (0, 0, 0, alpha), (cx, cy), radius + extra)
+
+        # 精緻化：透過高密度循環建立平滑的徑向漸變
+        fade_width = 120  # 漸變帶的寬度
+        steps = 32        # 使用 32 層渲染來消除階梯感
+        for i in range(steps, 0, -1):
+            # 使用平方曲線讓漸變更自然（Near clear in the center, rapidly darkening at edge）
+            progress = i / steps
+            alpha = int(255 * (progress ** 1.5))
+            curr_radius = inner_radius + (fade_width * progress)
+            pygame.draw.circle(overlay, (0, 0, 0, alpha), (cx, cy), int(curr_radius))
+
+        # 確保最核心區域完全清晰
+        pygame.draw.circle(overlay, (0, 0, 0, 0), (cx, cy), inner_radius)
         self.screen.blit(overlay, (0, 0))
 
     def _draw_charge_hud(self, render_data):
         """畫面下方顯示四色蓄能條與隊伍總進度（幾人已蓄滿）。"""
-        players = render_data.get("players", {})
-        sw, sh = self.screen.get_size()
-        order = ["blue", "green", "pink", "red"]
-        present = [c for c in order if c in players]
-        if not present:
-            return
-
-        bar_w, bar_h, gap = 160, 18, 16
-        total_w = len(present) * bar_w + (len(present) - 1) * gap
-        x0 = (sw - total_w) // 2
-        y0 = sh - 60
-        filled = 0
-        for idx, color in enumerate(present):
-            charge = max(0.0, min(1.0, players[color].get("charge", 0.0)))
-            if charge >= 1.0:
-                filled += 1
-            rgb = _PLAYER_COLORS.get(color, (200, 200, 200))
-            bx = x0 + idx * (bar_w + gap)
-            # 底框
-            pygame.draw.rect(self.screen, (40, 40, 40), (bx, y0, bar_w, bar_h), border_radius=4)
-            # 進度填滿
-            if charge > 0:
-                pygame.draw.rect(self.screen, rgb, (bx, y0, int(bar_w * charge), bar_h), border_radius=4)
-            # 外框：蓄滿時亮白，否則用該玩家顏色
-            border = (255, 255, 255) if charge >= 1.0 else rgb
-            pygame.draw.rect(self.screen, border, (bx, y0, bar_w, bar_h), 2, border_radius=4)
-
-        # 隊伍總進度文字
-        label = self.font.render(f"CHARGED {filled}/{len(present)}", True, (230, 230, 230))
-        self.screen.blit(label, ((sw - label.get_width()) // 2, y0 - 26))
+        # 目前充能邏輯已遷移至地圖物件，此處 HUD 暫不渲染以保持畫面簡潔。
+        pass
+        # players = render_data.get("players", {})
+        # sw, sh = self.screen.get_size()
+        # order = ["blue", "green", "pink", "red"]
+        # present = [c for c in order if c in players]
+        # if not present:
+        #     return
+        #
+        # bar_w, bar_h, gap = 160, 18, 16
+        # total_w = len(present) * bar_w + (len(present) - 1) * gap
+        # x0 = (sw - total_w) // 2
+        # y0 = sh - 60
+        # filled = 0
+        # for idx, color in enumerate(present):
+        #     charge = max(0.0, min(1.0, players[color].get("charge", 0.0)))
+        #     if charge >= 1.0:
+        #         filled += 1
+        #     rgb = _PLAYER_COLORS.get(color, (200, 200, 200))
+        #     bx = x0 + idx * (bar_w + gap)
+        #     # 底框
+        #     pygame.draw.rect(self.screen, (40, 40, 40), (bx, y0, bar_w, bar_h), border_radius=4)
+        #     # 進度填滿
+        #     if charge > 0:
+        #         pygame.draw.rect(self.screen, rgb, (bx, y0, int(bar_w * charge), bar_h), border_radius=4)
+        #     # 外框：蓄滿時亮白，否則用該玩家顏色
+        #     border = (255, 255, 255) if charge >= 1.0 else rgb
+        #     pygame.draw.rect(self.screen, border, (bx, y0, bar_w, bar_h), 2, border_radius=4)
+        #
+        # # 隊伍總進度文字
+        # label = self.font.render(f"CHARGED {filled}/{len(present)}", True, (230, 230, 230))
+        # self.screen.blit(label, ((sw - label.get_width()) // 2, y0 - 26))
 
     def display(self):
         """將繪製內容更新到螢幕上"""
