@@ -39,9 +39,9 @@ _FALLBACK_MAP_LAYOUT = [
     [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],  # 0
     [W, P, P, P, P, P, P, P, P, P, P, P, P, W, W, W, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W],  # 1
     [W, W, W, W, P, W, W, W, W, W, W, W, P, W, W, W, P, W, W, W, W, W, P, W, W, W, P, W, W, W, W, W],  # 2
-    [W, W, W, W, P, W, W, W, W, W, W, W, P, W, W, W, P, W, W, W, W, W, P, P, P, P, P, W, W, W, W, W],  # 3
+    [W, W, W, W, P, W, W, W, W, W, W, W, P, W, W, W, P, W, W, W, W, W, P, W, W, W, P, W, W, W, W, W],  # 3
     [W, W, W, W, P, W, W, W, W, W, W, W, P, W, W, W, P, W, W, W, W, W, P, W, W, W, P, W, W, W, W, W],  # 4
-    [W, P, P, P, P, P, P, P, P, P, P, P, F, P, P, P, P, P, B, P, G, P, P, P, P, P, P, P, P, P, P, W],  # 5
+    [W, P, P, P, P, P, P, P, P, P, P, P, F, P, P, P, P, P, B, P, G, P, P, P, F, P, P, P, P, P, P, W],  # 5
     [W, P, W, W, P, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, P, W, W, W, P, W, W, W, W, W, P, W],  # 6
     [W, P, W, W, P, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, P, W, W, W, P, W, W, W, W, W, P, W],  # 7
     [W, P, W, W, P, W, P, P, P, P, F, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, W],  # 8
@@ -85,7 +85,7 @@ _FALLBACK_DESIRED_STATIONS = {
 
 # ─── 遊戲數值常數 ─────────────────────────────────────────────────────────────
 # PLAYER_SPEED 由 entities.py 提供，確保與 Ghost 預設速度一致
-PACMAN_BASE_SPEED   = 100   # Pac-Man 起始基礎速度（會隨時間升級）
+PACMAN_BASE_SPEED   = 80   # Pac-Man 起始基礎速度（會隨時間升級）
 PACMAN_BOOST_MULT   = 1.5
 CATCH_RADIUS        = 56
 RESCUE_RADIUS       = 70
@@ -106,7 +106,7 @@ FOG_DURATION        = 2.5   # 致盲持續秒數
 FOG_VISION_RADIUS   = 50    # 致盲期間玩家周圍清晰圓的半徑（像素）
 
 # Pac-Man 階段升級排程（取代倒數計時的壓力來源；僅 authority 依此排程）
-PACMAN_SPEED_STAGE_INTERVAL = 1.0  # 每幾秒提升一階基礎速度
+PACMAN_SPEED_STAGE_INTERVAL = 1.5  # 每幾秒提升一階基礎速度
 PACMAN_SPEED_STAGE_STEP     = 1  # 每階增加的速度
 PACMAN_SPEED_CAP            = 150   # 基礎速度上限
 PACMAN_DUPLICATE_INTERVAL   = 5000  # 每幾秒複製出一隻新 Pac-Man
