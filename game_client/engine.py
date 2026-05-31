@@ -48,8 +48,9 @@ class GameEngine:
             except Exception:
                 pass
 
-        # 1. 僅初始化音訊與基礎模組，暫不啟動顯示模組
-        pygame.mixer.pre_init(44100, -16, 2, 512)
+        # 1. 初始化音訊。緩衝區(buffer)調整為 2048 以平衡音質與延遲。
+        # 如果 .ogg 檔案是 48000Hz，建議將 44100 改為 48000。
+        pygame.mixer.pre_init(48000, -16, 2, 2048)
         pygame.init()
 
         self.clock = pygame.time.Clock()
@@ -62,9 +63,20 @@ class GameEngine:
 
         # 2.6. 建立音效管理器，負責統一載入、頻道、音量與淡入行為
         self.sound_manager = SoundManager()
-        self.sound_manager.load_sound("alarm", "Alarm_1.ogg", volume=0.5)
-        self.sound_manager.load_sound("bgm", "bgm_loop.ogg", volume=0.5)
-        self.sound_manager.set_master_volume(0.5)
+        self.sound_manager.load_sound("alarm", "Alarm_1.ogg", volume=0.8)
+        # 預載通關動畫所需音效
+        self.sound_manager.load_sound("swoosh_in", "swoosh_in.ogg", volume=0.8)
+        self.sound_manager.load_sound("stamp", "stamp.ogg", volume=0.8)
+        self.sound_manager.load_sound("swoosh_out", "swoosh_out.ogg", volume=0.8)
+        # 預載小遊戲動態音效
+        self.sound_manager.load_sound("button_in", "button_in.ogg", volume=0.8)
+        self.sound_manager.load_sound("button_out", "button_out.ogg", volume=0.8)
+        self.sound_manager.load_sound("charged", "charged.ogg", volume=0.8)
+        self.sound_manager.load_sound("eat", "eat.ogg", volume=0.8)
+        self.sound_manager.load_sound("blind", "blind.ogg", volume=0.8)
+        # 根據環境變數決定主音量：若設定 MUTE_AUDIO 則初始音量為 0 (多開測試用)
+        self.base_volume = 0.0 if os.environ.get('MUTE_AUDIO') == '1' else 0.5
+        self.sound_manager.set_master_volume(self.base_volume)
 
         self.renderer = None  # 視窗建立後才初始化渲染器
         self.network = None   # 關鍵修正：先定義屬性為 None，防止背景執行緒回呼時噴出 AttributeError
@@ -90,6 +102,9 @@ class GameEngine:
         self._show_surrender_ui = False    # 是否顯示投降按鈕
         self._game_over = False
         self._pending_teammate_events = [] # 來自背景執行緒的斷線事件佇列
+        self._bgm_faded = False            # 標記當前遊戲 BGM 是否已觸發淡出
+        self._last_clear_stage = 0         # 記錄上一次偵測到的通關動畫階段
+        self._is_blind_muffled = False     # 是否處於致盲音量模式
         self._local_disconnected = False   # 本機自己是否與 server 斷線（由 network 回呼設定）
 
         # 小遊戲狀態
@@ -206,7 +221,7 @@ class GameEngine:
                     print(f"[Engine] DEBUG_WINDOW_POS 失敗：{_e}")
         else:
             self.screen = pygame.display.set_mode((1920, 1080), pygame.FULLSCREEN | pygame.SCALED)
-        caption = os.environ.get('DEBUG_TITLE', 'Co-up: Tethered Alarm')
+        caption = os.environ.get('DEBUG_TITLE', 'Co-up')
         # 若已指派顏色則顯示在標題
         if self.network and self.network.player_color: # 增加安全檢查，確保 network 已實例化
             caption = f"{caption} (Init: {self.network.player_color})"
@@ -285,7 +300,7 @@ class GameEngine:
 
         if self._pending_play_alarm:
             self._pending_play_alarm = False
-            self.sound_manager.set_master_volume(0.5)
+            self.sound_manager.set_master_volume(self.base_volume)
             self.sound_manager.play_alarm(fade_ms=10000)
 
         if self._pending_show_window:
@@ -340,8 +355,14 @@ class GameEngine:
                 # 所有 client 必須產出相同順序的 player_id_list，否則顏色分配與 authority 會分歧
                 player_id_list = self._build_ordered_player_id_list()
                 print(f"[Engine] minigame player_id_list: {player_id_list}")
-                self.active_game = game_cls(self.network, player_id_list)
+                self.active_game = game_cls(self.network, player_id_list, self.sound_manager)
                 self.active_game.on_enter()
+                
+                # 透過 SoundManager 啟動遊戲 BGM，保持 Engine 程式碼整潔
+                self.sound_manager.play_music("game_bgm.ogg", volume=1, loops=-1)
+                
+                self._bgm_faded = False
+                self._last_clear_stage = 0
                 print(f"[Engine] minigame started: {game_name}")
             else:
                 print(f"[Engine] unknown minigame: {game_name}")
@@ -429,6 +450,21 @@ class GameEngine:
                 self.active_game.handle_event({"type": "move", "dx": dx, "dy": dy})
                 self.active_game.update(dt)
 
+                # 監測通關動畫階段切換，播放對應音效
+                if self.active_game.clear_anim_stage != self._last_clear_stage:
+                    curr_stage = self.active_game.clear_anim_stage
+                    if curr_stage == 1 and not self._bgm_faded:
+                        self.sound_manager.fadeout_music(1000)
+                        self._bgm_faded = True
+                    elif curr_stage == 2:
+                        self.sound_manager.play("swoosh_in")
+                    elif curr_stage == 3:
+                        self.sound_manager.play("stamp")
+                    elif curr_stage == 4:
+                        self.sound_manager.play("swoosh_out")
+                    
+                    self._last_clear_stage = curr_stage
+
                 # 定期廣播本地玩家在小遊戲中的位置（讓隊友看到自己）
                 self._game_sync_timer += dt
                 if self._game_sync_timer >= self._GAME_SYNC_INTERVAL:
@@ -444,6 +480,11 @@ class GameEngine:
 
                 # 通關判定
                 if self.active_game.is_cleared():
+                    self.sound_manager.stop_music() # 確保音樂徹底停止
+                    # 確保恢復音量
+                    if self._is_blind_muffled:
+                        self._is_blind_muffled = False
+                        self.sound_manager.set_master_volume(self.base_volume)
                     self.active_game.on_exit()
                     self.active_game = None
                     print("[Engine] minigame cleared!")
@@ -468,6 +509,16 @@ class GameEngine:
                 other_rects = [g.rect for g in self.remote_ghosts.values() if not g.disconnected]
                 self.player.move(dx, dy, dt, others=other_rects)
                 self.entity_manager.update_all(dt)
+
+            # 全域音量狀態監控 (處理致盲效果)
+            currently_blind = False
+            if self.active_game:
+                lp = self.active_game.players.get(self.active_game.local_color)
+                currently_blind = bool(lp and getattr(lp, 'fog_timer', 0) > 0)
+            
+            if currently_blind != self._is_blind_muffled:
+                self._is_blind_muffled = currently_blind
+                self.sound_manager.set_master_volume(self.base_volume, muffled=currently_blind)
 
             # 定期廣播基礎位置 (Presence Heartbeat)
             # 即使在小遊戲中也要發送，讓後進的 Debug Client 能看見所有人並啟動遊戲
