@@ -4,7 +4,7 @@ import math
 
 from sync_helpers import RemoteSyncState, apply_server_update, tick_remote_sync
 
-PLAYER_SPEED = 400  # Ghost 預設移動速度（像素/秒），小遊戲可 import 此常數共用
+PLAYER_SPEED = 200  # Ghost 預設移動速度（像素/秒），小遊戲可 import 此常數共用
 
 class Entity:
     """

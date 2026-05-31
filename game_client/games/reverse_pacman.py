@@ -107,10 +107,10 @@ FOG_VISION_RADIUS   = 50    # 致盲期間玩家周圍清晰圓的半徑（像�
 
 # Pac-Man 階段升級排程（取代倒數計時的壓力來源；僅 authority 依此排程）
 PACMAN_SPEED_STAGE_INTERVAL = 1.0  # 每幾秒提升一階基礎速度
-PACMAN_SPEED_STAGE_STEP     = 0  # 每階增加的速度
-PACMAN_SPEED_CAP            = 250   # 基礎速度上限
+PACMAN_SPEED_STAGE_STEP     = 1  # 每階增加的速度
+PACMAN_SPEED_CAP            = 150   # 基礎速度上限
 PACMAN_DUPLICATE_INTERVAL   = 5000  # 每幾秒複製出一隻新 Pac-Man
-PACMAN_MAX_COUNT            = 1     # Pac-Man 數量上限
+PACMAN_MAX_COUNT            = 4     # Pac-Man 數量上限
 
 # 失敗投票機制：四人同時倒地後，進入投票決定是否重玩本局
 DEFEAT_VOTE_TIME    = 30.0  # 投票倒數秒數（逾時未投視為放棄）
