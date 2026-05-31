@@ -108,7 +108,7 @@ FOG_VISION_RADIUS   = 50    # 致盲期間玩家周圍清晰圓的半徑（像�
 # Pac-Man 階段升級排程（取代倒數計時的壓力來源；僅 authority 依此排程）
 PACMAN_SPEED_STAGE_INTERVAL = 1.5  # 每幾秒提升一階基礎速度
 PACMAN_SPEED_STAGE_STEP     = 1  # 每階增加的速度
-PACMAN_SPEED_CAP            = 150   # 基礎速度上限
+PACMAN_SPEED_CAP            = 250   # 基礎速度上限
 PACMAN_DUPLICATE_INTERVAL   = 5000  # 每幾秒複製出一隻新 Pac-Man
 PACMAN_MAX_COUNT            = 4     # Pac-Man 數量上限
 
