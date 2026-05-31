@@ -101,8 +101,8 @@ class PlayerState(Ghost):
         self._base_speed = value
 
 class DodgeKnives(BaseLogicInterface):
-    def __init__(self, socket_client, player_id_list):
-        super().__init__(socket_client, player_id_list)
+    def __init__(self, socket_client, player_id_list, sound_manager):
+        super().__init__(socket_client, player_id_list, sound_manager)
         self.local_color = socket_client.player_color
         self.local_pid = socket_client.player_id
         # 採用 network 的單一真值源（server roster 指定；debug 路徑由 engine 以顏色 fallback 設好），
@@ -188,6 +188,7 @@ class DodgeKnives(BaseLogicInterface):
                 if self.is_authority and not btn.is_triggered and btn.charge_timer >= BUTTON_HOLD_TIME:
                         btn.is_triggered = True
                         btn.activated_time = pygame.time.get_ticks()
+                        self.sound_manager.play("charged")
                         self.socket_client.send_game_event({
                             "type": "button_activated", "color": btn.assigned_color
                         })
@@ -263,4 +264,5 @@ class DodgeKnives(BaseLogicInterface):
             for b in self.buttons:
                 if b.assigned_color == btn_color:
                     b.is_triggered = True
+                    self.sound_manager.play("charged")
                     b.activated_time = pygame.time.get_ticks()

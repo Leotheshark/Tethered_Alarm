@@ -63,6 +63,7 @@ def main():
         env["DEBUG_PLAYERS"] = str(n)  # 湊滿 n 人才啟動小遊戲
         env["ROOM_ID"] = args.room
         env["PLAYER_COLOR"] = colors[i]
+        env["MUTE_AUDIO"] = "1" if i > 0 else "0"
         env["SERVER_URL"] = "http://127.0.0.1:5000"
         print(f"[debug] 啟動 client {i + 1} 於 {positions[i]}")
         procs.append(subprocess.Popen([sys.executable, game_client], env=env))

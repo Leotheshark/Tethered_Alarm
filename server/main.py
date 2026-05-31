@@ -33,8 +33,12 @@ class ServerState:
         # 音效資源路徑
         self.bgm_path = os.path.join(base_dir, "..", "game_client", "assets", "sounds", "bgm_loop.ogg")
         self.alarm_sound_path = os.path.join(base_dir, "..", "game_client", "assets", "sounds", "Alarm_1.ogg")
+        self.click_sound_path = os.path.join(base_dir, "..", "game_client", "assets", "sounds", "click.ogg")
+        self.all_ready_path = os.path.join(base_dir, "..", "game_client", "assets", "sounds", "all_ready.ogg")
         self.alarm_test_sound = None
         self.alarm_real_sound = None
+        self.all_ready_sound = None
+        self.click_sound = None
         
         # 初始化音訊引擎
         pygame.mixer.init()
@@ -68,6 +72,29 @@ class ServerState:
     def resume_lobby_bgm(self):
         """恢復背景音樂 (用於測試音量後)"""
         pygame.mixer.music.unpause()
+
+    def play_click(self):
+        """播放按鈕點擊音效 (一次性播放)"""
+        try:
+            if not self.click_sound and os.path.exists(self.click_sound_path):
+                self.click_sound = pygame.mixer.Sound(self.click_sound_path)
+            
+            if self.click_sound:
+                # 點擊聲通常很短且頻繁，使用 play() 可以在多重連點時疊加播放
+                self.click_sound.play()
+        except Exception as e:
+            print(f"[server] failed to play click sound: {e}")
+
+    def play_all_ready(self):
+        """播放全員準備完成音效"""
+        try:
+            if not self.all_ready_sound and os.path.exists(self.all_ready_path):
+                self.all_ready_sound = pygame.mixer.Sound(self.all_ready_path)
+            
+            if self.all_ready_sound:
+                self.all_ready_sound.play()
+        except Exception as e:
+            print(f"[server] failed to play all_ready sound: {e}")
 
     def play_test_alarm(self):
         """播放鬧鐘音效用於測試音量 (播放一次)"""
@@ -294,11 +321,11 @@ async def test_alarm_sound(sid, data=None):
     print(f"[server] test_alarm_sound request from {sid}")
     duration = state.play_test_alarm()
     if duration > 0:
-        await sio.emit(ServerEvent.TEST_ALARM_STATUS, {"status": "started"})
+        await sio.emit(ServerEvent.TEST_ALARM_STATUS, {"status": "started"}, to=sid)
         # 等待音效播放結束
         await asyncio.sleep(duration)
         state.resume_lobby_bgm()
-        await sio.emit(ServerEvent.TEST_ALARM_STATUS, {"status": "finished"})
+        await sio.emit(ServerEvent.TEST_ALARM_STATUS, {"status": "finished"}, to=sid)
 
 
 @sio.event
@@ -539,6 +566,26 @@ class LobbyAPI:
     def stop_alarm_sound(self):
         """由前端通知停止本地鬧鐘音效。"""
         state.stop_actual_alarm()
+
+    def play_click_sound(self):
+        """由前端通知播放按鈕點擊聲。"""
+        state.play_click()
+
+    def play_all_ready_sound(self):
+        """由前端通知播放全員準備音效。"""
+        state.play_all_ready()
+
+    def test_alarm_local(self):
+        """本地測試音效：不經過伺服器廣播，直接在本地進程播放。"""
+        duration = state.play_test_alarm()
+        if duration > 0:
+            # 建立線程在播放完畢後自動恢復背景音樂
+            def resume_after_delay():
+                time.sleep(duration)
+                state.resume_lobby_bgm()
+            
+            threading.Thread(target=resume_after_delay, daemon=True).start()
+        return duration
 
     def get_tailscale_ip(self):
         """偵測並回傳本機的 Tailscale IP (100.x.y.z)。"""

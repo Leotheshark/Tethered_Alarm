@@ -263,15 +263,18 @@ class PlayerState(Ghost):
 
     @property
     def speed(self):
-        """根據當前狀態決定移動速度（復活累積減速 + 釘板額外減速）。"""
+        """根據當前狀態決定移動速度（復活累積減速 + 釘板額外減速 + 迷霧減速）。"""
         if not self.is_alive:
             return 0.0
         base = getattr(self, '_base_speed', PLAYER_SPEED)
         # 復活累積永久減速：每救一次更慢，趨近地板值
         revive_factor = max(REVIVE_SLOW_FLOOR, 1.0 - self.rescue_count * REVIVE_SLOW_STEP)
         base *= revive_factor
-        # 踩到釘板時再額外砍半（暫時效果；迷霧只影響視野，不影響速度）
+        # 踩到釘板時再額外砍半
         if self.spike_timer > 0:
+            base *= 0.5
+        # 迷霧期間移動速度 * 0.5
+        if self.fog_timer > 0:
             base *= 0.5
         return base
 
@@ -317,8 +320,8 @@ class ReversePacman(BaseLogicInterface):
     - 其他客戶端接收廣播，只更新本地的渲染座標與自己的能量條。
     """
 
-    def __init__(self, socket_client, player_id_list):
-        super().__init__(socket_client, player_id_list)
+    def __init__(self, socket_client, player_id_list, sound_manager):
+        super().__init__(socket_client, player_id_list, sound_manager)
 
         # 取得本地玩家資訊
         self.local_color = socket_client.player_color       # 本機玩家顏色
@@ -336,6 +339,7 @@ class ReversePacman(BaseLogicInterface):
         self.button_coords = list(BUTTON_COORDS)
         # 哪些閘門目前是開著的（格座標 set）
         self.open_gates = set()
+        self._any_gate_pressed = False      # 記錄上一幀是否有閘門按鈕被踩著
         self.buttons = []
 
         # 所有玩家狀態字典 { color: PlayerState }，依 player_id_list 的順序對應顏色
@@ -530,6 +534,7 @@ class ReversePacman(BaseLogicInterface):
                     if self.is_authority and not btn.is_triggered and btn.charge_timer >= BUTTON_HOLD_TIME:
                             btn.is_triggered = True
                             btn.activated_time = pygame.time.get_ticks()
+                            self.sound_manager.play("charged")
                             self.socket_client.send_game_event({
                                 "type": "button_activated", "color": btn.assigned_color
                             })
@@ -724,6 +729,7 @@ class ReversePacman(BaseLogicInterface):
             for b in self.buttons:
                 if b.assigned_color == btn_color:
                     b.is_triggered = True
+                    self.sound_manager.play("charged")
                     b.activated_time = pygame.time.get_ticks()
 
         elif dtype == "player_caught":
@@ -732,6 +738,7 @@ class ReversePacman(BaseLogicInterface):
             p = self.players.get(color)
             if p and p.is_alive:
                 p.is_alive = False
+                self.sound_manager.play("eat")
                 p.rescue_progress = 0.0
                 p.being_rescued = False
                 # 倒地後能量會開始緩降，但那由該玩家本人的 update 計算後廣播，這裡不需動 charge。
@@ -746,6 +753,11 @@ class ReversePacman(BaseLogicInterface):
                 p.rescue_count = data.get("rescue_count", p.rescue_count + 1)
                 p.rescue_progress = 0.0
                 p.being_rescued = False
+
+        elif dtype == "sfx_trigger":
+            sfx = data.get("sfx")
+            if sfx:
+                self.sound_manager.play(sfx)
 
         elif dtype == "rescue_progress_start":
             color = data.get("color")
@@ -838,6 +850,8 @@ class ReversePacman(BaseLogicInterface):
                 player.spike_timer = SPIKE_SLOW_DURATION
         elif tile == F:
             # 踩在迷霧上：持續把致盲倒數刷新到滿，離開後才開始倒數
+            if player.fog_timer <= 0:
+                self.sound_manager.play("blind")
             player.fog_timer = FOG_DURATION
 
     def _escalate_pacmen(self):
@@ -1040,6 +1054,15 @@ class ReversePacman(BaseLogicInterface):
                 any_pressed = True
                 break
 
+        # 偵測閘門按鈕踩下/放開的邊緣觸發
+        if any_pressed != self._any_gate_pressed:
+            self._any_gate_pressed = any_pressed
+            sfx = "button_in" if any_pressed else "button_out"
+            try:
+                self.socket_client.send_game_event({"type": "sfx_trigger", "sfx": sfx})
+            except: pass
+            self.sound_manager.play(sfx) # 授權端也要播放本地音效
+
         # 只要有任何按鈕被踩下，就開啟地圖上所有的閘門
         should_open = set(self.gate_coords) if any_pressed else set()
 
@@ -1096,6 +1119,7 @@ class ReversePacman(BaseLogicInterface):
 
         player.is_alive = False
         player.visual_key = "dead"
+        self.sound_manager.play("eat")
         player.rescue_progress = 0.0
         print(f"[ReversePacman] {player.color_key} caught! rescue_count={player.rescue_count}")
 

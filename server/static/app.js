@@ -380,27 +380,33 @@ const uiCallbacks = {
         if (!isBusy) alarmHint.dataset.triggered = 'false';
     },
     onAllReady: data => {
+        // 1. 禁止改變 ready 狀態 (鎖定按鈕)
         readyButton.disabled = true;
         readyButton.style.cursor = 'not-allowed';
         readyButton.style.opacity = '0.6';
-        const overlay = document.getElementById('countdown-overlay');
-        const num = document.getElementById('countdown-number');
-        overlay.style.display = 'flex';
-        let count = data.countdown;
-        num.textContent = count;
-        const timer = setInterval(() => {
-            count--;
-            if (count <= 0) {
-                clearInterval(timer);
-                num.textContent = 'GO!';
-                // 重要：只有房長負責發送開始指令，避免所有人同時觸發 Server 廣播
+        
+        // 2. 鬧鐘聲停止
+        if (window.pywebview && window.pywebview.api.stop_alarm_sound) {
+            window.pywebview.api.stop_alarm_sound();
+        }
+
+        // 2. 等待 0.5 秒
+        setTimeout(() => {
+            // 3. 播放 all_ready.ogg
+            if (window.pywebview && window.pywebview.api.play_all_ready_sound) {
+                window.pywebview.api.play_all_ready_sound();
+            }
+            // 4. 畫面在 2 秒內漸漸變暗
+            const fadeOverlay = document.getElementById('fade-out-overlay');
+            fadeOverlay.classList.add('active');
+
+            // 5. 漸變結束後（或接近結束時）啟動遊戲
+            setTimeout(() => {
                 if (socketManager.isHost()) {
                     socketManager.sendStartGame();
                 }
-            } else {
-                num.textContent = count;
-            }
-        }, 1000);
+            }, 2000);
+        }, 500);
     },
     onAlarmSet: data => {
         document.getElementById('sleep-overlay').style.display = 'flex';
@@ -474,6 +480,10 @@ const uiCallbacks = {
     },
     onGameStarted: () => {
         document.getElementById('countdown-overlay').style.display = 'none';
+        // 確保轉場遮罩重置，以免下次回到大廳時黑屏
+        const fadeOverlay = document.getElementById('fade-out-overlay');
+        if (fadeOverlay) fadeOverlay.classList.remove('active');
+        
         lobbyBackButton.style.display = 'none'; // 進入遊戲時隱藏返回鍵
         console.log('伺服器確認：遊戲正式開始！');
 
@@ -586,8 +596,21 @@ if (inviteButton) inviteButton.onclick = copyInviteLink;
 langButtons.forEach(btn => btn.onclick = toggleLanguage);
 
 if (testVolButton) {
-    testVolButton.onclick = () => {
-        if (socketManager) socketManager.sendTestAlarm();
+    testVolButton.onclick = async () => {
+        if (isTestingVolume) return;
+
+        // 優先嘗試本地測試 (純本地音效 + 純本地 UI 變化)
+        if (window.pywebview && window.pywebview.api.test_alarm_local) {
+            const duration = await window.pywebview.api.test_alarm_local();
+            uiCallbacks.onTestAlarmStatus({ status: 'started' });
+            
+            setTimeout(() => {
+                uiCallbacks.onTestAlarmStatus({ status: 'finished' });
+            }, (duration || 3) * 1000);
+        } else {
+            // Fallback: 若在一般瀏覽器開啟，則走 Socket 流程 (伺服器端已改為只回傳給自己)
+            if (socketManager) socketManager.sendTestAlarm();
+        }
     };
 }
 
@@ -712,6 +735,22 @@ tryAnotherRoomButton.onclick = () => {
 document.getElementById('btn-error-ok').onclick = () => {
     leaveRoom(true); // 強制退出，不跳確認框
 };
+
+// --- 全局按鈕點擊音效處理 ---
+// 監聽所有的 mousedown 事件，如果是按鈕且非排除對象，則播放點擊聲
+document.addEventListener('mousedown', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+
+    // 排除「複製 IP」(btn-invite) 以及所有「語系切換」(lang-btn) 按鈕
+    if (btn.id === 'btn-invite' || btn.classList.contains('lang-btn')) {
+        return;
+    }
+
+    if (window.pywebview && window.pywebview.api.play_click_sound) {
+        window.pywebview.api.play_click_sound();
+    }
+});
 
 updateLanguage();
 startApp();
