@@ -228,6 +228,15 @@ class SocketManager {
                 this.uiCallbacks.onGameStarted();
             }
         });
+
+        // game_over：遊戲結束（通關/投降/失敗放棄）回大廳。先前漏接此監聽器，導致
+        // onGameOver 永不執行 → triggered 旗標殘留、視窗不自動恢復、isLaunchingGame 不重置，
+        // 房主回 lobby 後 alarmClock 被鎖死無法再設鬧鐘。
+        this.socket.on('game_over', data => {
+            if (this.uiCallbacks.onGameOver) {
+                this.uiCallbacks.onGameOver(data);
+            }
+        });
     }
 
     // 加入房間：建立 socket 連線後立刻送出 join_room 請求
@@ -331,11 +340,13 @@ const uiCallbacks = {
         const isHost = currentSocketId === state.host_sid;
         const isFull = state.count === 4;
         const alarmHint = document.getElementById('alarm-hint');
-        const hasTriggered = alarmHint.dataset.triggered === 'true';
-        const isBusy = !!state.alarm_time || hasTriggered;
+        // isBusy 只信任 server 權威狀態 state.alarm_time（鬧鐘設定中才有值，觸發/結束時為 None）。
+        // 不再 OR 本地 dataset.triggered 旗標——那是脆弱的競態溫床（曾導致旗標殘留把 alarmClock
+        // 鎖死）。dataset.triggered 僅作 onAlarmTriggered 的本地記錄，不參與業務判定。
+        const isBusy = !!state.alarm_time;
         alarmClock.style.cursor = isHost && isFull && !isBusy ? 'pointer' : 'default';
         alarmHint.style.visibility = isFull && !isBusy ? 'visible' : 'hidden';
-        if (!isFull) alarmHint.dataset.triggered = 'false';
+        if (!isBusy) alarmHint.dataset.triggered = 'false';
     },
     onAllReady: data => {
         readyButton.disabled = true;
@@ -398,11 +409,19 @@ const uiCallbacks = {
             window.pywebview.api.restore_lobby();
         }
         // 重置大廳狀態與 UI 標記
-        document.getElementById('alarm-hint').dataset.triggered = 'false';
+        const alarmHint = document.getElementById('alarm-hint');
+        alarmHint.dataset.triggered = 'false';
         readyButton.disabled = false;
         readyButton.style.opacity = '1.0';
         readyButton.style.cursor = 'pointer';
         readyButton.classList.remove('active');
+
+        // 主動恢復 alarmClock 可設狀態：回 lobby 是「可重設鬧鐘」的明確時機，server 已把
+        // alarm_time 清為 None。不被動等下一個 room_state（其到達時機/順序不保證可靠），
+        // 直接由本機判斷自己是否房主來解鎖，確保房主一定能再次設鬧鐘。
+        const isHost = socketManager && socketManager.isHost();
+        alarmClock.style.cursor = isHost ? 'pointer' : 'default';
+        alarmHint.style.visibility = 'visible';
     },
     onGameStarted: () => {
         document.getElementById('countdown-overlay').style.display = 'none';

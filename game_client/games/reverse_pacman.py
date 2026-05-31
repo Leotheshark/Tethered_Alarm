@@ -132,7 +132,7 @@ PACMAN_DUPLICATE_INTERVAL   = 25.0  # 每幾秒複製出一隻新 Pac-Man
 PACMAN_MAX_COUNT            = 4     # Pac-Man 數量上限
 
 # 失敗投票機制：四人同時倒地後，進入投票決定是否重玩本局
-DEFEAT_VOTE_TIME    = 15.0  # 投票倒數秒數（逾時未投視為放棄）
+DEFEAT_VOTE_TIME    = 30.0  # 投票倒數秒數（逾時未投視為放棄）
 
 
 def tile_center(row, col):
