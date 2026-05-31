@@ -827,7 +827,9 @@ class ReversePacman(BaseLogicInterface):
                     self.socket_client.send_game_event({
                         "type": "player_rescued", "color": color, "rescue_count": target.rescue_count
                     })
-            elif target.being_rescued:
+            # 關鍵修正：只有當本地確實在進行救援（進度 > 0）時，才在離開範圍後發送停止事件。
+            # 這能防止遠端隊友因「距離目標太遠」而誤發停止封包，干擾真正的救援者。
+            elif target.being_rescued and target.rescue_progress > 0:
                 target.being_rescued = False
                 target.rescue_progress = 0.0
                 self.socket_client.send_game_event({"type": "rescue_progress_stop", "color": color})
