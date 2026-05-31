@@ -277,9 +277,6 @@ class Renderer:
                     -math.pi / 2, end_angle, 4
                 )
 
-            # 減速指示：踩釘板或已被救過（rescue_count>0）→ 疊紫色緩速環
-            if pdata.get("spike") or rescue_count > 0:
-                pygame.draw.circle(self.screen, (200, 100, 255), (px, py), radius + 2, 2)
             # rescue_count 用紅色小圓點顯示「被救過幾次 / 有多慢」
             for i in range(rescue_count):
                 pygame.draw.circle(self.screen, (255, 80, 80), (px - 12 + i * 8, py - radius - 12), 3)
