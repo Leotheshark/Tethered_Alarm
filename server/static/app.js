@@ -23,7 +23,7 @@ const translations = {
         try_another_room: '嘗試其他房間',
         alarm_hint: '全員到齊！房長可以點擊時鐘設定鬧鐘了',
         time_until: '鬧鐘將在 $t 後響起',
-        alarm_time_prefix: '訂下的起床時間：',
+        alarm_time_prefix: 'ALARM SET FOR: ', // 中文版也與原廠設計圖同步，維持乾淨優雅風格
         speaker_warning: '⚠️ 偵測到耳機輸出，請切換至喇叭以免睡過頭！',
         you: '你',
         test_volume: '測試音量',
@@ -44,7 +44,7 @@ const translations = {
         try_another_room: 'Try another room',
         alarm_hint: 'All players here! Host can set the alarm.',
         time_until: 'Alarm in: $t',
-        alarm_time_prefix: 'Set Alarm Time: ',
+        alarm_time_prefix: 'ALARM SET FOR: ', // 完美契合設計圖字樣
         speaker_warning: '⚠️ Headset detected! Switch to speakers to avoid oversleeping.',
         you: 'You',
         test_volume: 'Test Volume',
@@ -429,16 +429,13 @@ if (testVolButton) {
 }
 
 // 程式啟動入口：要求房間 ID，顯示房間資訊，並建立 SocketManager
-// 程式啟動入口：如果沒有 room 參數，提示使用者輸入；然後建立 socket 連線
 function startApp() {
-    // 避免使用 while 導致 prompt 被阻擋時進入死迴圈
     if (!ROOM_ID || !ROOM_ID.trim()) {
         try {
             ROOM_ID = prompt(translations[currentLang].room_prompt, 'room-' + Math.floor(Math.random() * 1000));
         } catch (e) {
             console.warn("Prompt is not supported in this environment or was cancelled.");
         }
-        // 如果 prompt 失敗或被取消，給予預設 ID
         if (!ROOM_ID || !ROOM_ID.trim()) {
             ROOM_ID = 'room-' + Math.floor(Math.random() * 1000);
             console.log("Using default room ID:", ROOM_ID);
@@ -447,7 +444,7 @@ function startApp() {
 
     document.getElementById('displayRoomId').textContent = ROOM_ID;
     socketManager = new SocketManager(window.location.origin, ROOM_ID, uiCallbacks);
-    if (alarmClock) { // 增加檢查，避免 alarmClock 為 null
+    if (alarmClock) {
         alarmClock.onclick = () => {
             if (socketManager?.isHost() && alarmClock.style.cursor === 'pointer') {
                 showTimePicker();

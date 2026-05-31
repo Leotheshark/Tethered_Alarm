@@ -1,8 +1,8 @@
 /* ------------------------------------------------------------------ */
-/* Lobby 專用 CSS      
-   這個檔案為大廳頁面定義視覺風格、元件佈局、按鈕樣式、遮罩與模態框效果。   
-   HTML 元素與 app.js 行為邏輯共同構成完整的互動體驗。                  
-*/
+/* Lobby 專用 CSS                                                     */
+/* 這個檔案為大廳頁面定義視覺風格、元件佈局、按鈕樣式、遮罩與模態框效果。 */
+/* HTML 元素與 app.js 行為邏輯共同構成完整的互動體驗。                  */
+/* ------------------------------------------------------------------ */
 :root {
     --player-blue: #54a0ff;
     --player-green: #5fcf80;
@@ -160,7 +160,6 @@ body {
     color: white;
 }
 
-/* 倒數計時遮罩：遊戲準備完成後顯示倒數畫面 */
 /* 倒數計時遮罩：當伺服器通知 all_ready 時顯示，倒數結束後開始遊戲 */
 #countdown-overlay {
     position: fixed;
@@ -193,37 +192,103 @@ body {
     visibility: hidden;
 }
 
-#sleep-overlay .sleep-icon {
-    font-size: 5rem;
-}
-
-#display-set-alarm-time {
-    font-size: 2rem;
-    margin-top: 10px;
-    color: #e94560;
-}
-
-/* 睡眠遮罩：房長設定鬧鐘後顯示，讓玩家進入待命狀態並等待鬧鐘觸發 */
+/* ================================================================== */
+/* 全新優化：睡眠模式遮罩（深邃漸層星空、霓虹發光與微幅浮動動畫）        */
+/* ================================================================== */
 #sleep-overlay {
     position: fixed;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background: #1a1a2e;
+    /* 深暗夜藍至極黑的放射狀漸層 */
+    background: radial-gradient(circle at center, #1b1b2f 0%, #0f0f1a 100%);
     display: none;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    color: #e94560;
+    gap: 35px;
     z-index: 90;
+    overflow: hidden;
 }
 
-.sleep-text {
-    font-size: 2rem;
-    margin-top: 20px;
-    letter-spacing: 5px;
+/* 利用純 CSS 產生背景微弱夜空星光點綴 */
+#sleep-overlay::before {
+    content: "";
+    position: absolute;
+    width: 2px;
+    height: 2px;
+    border-radius: 50%;
+    top: 0;
+    left: 0;
+    box-shadow: 
+        15vw 20vh 1.5px #fff, 25vw 12vh 1px rgba(255,255,255,0.7), 35vw 30vh 2px #fff,
+        75vw 15vh 1px #fff, 85vw 28vh 1.5px rgba(255,255,255,0.8), 65vw 10vh 2px #fff,
+        10vw 70vh 1px rgba(255,255,255,0.5), 20vw 85vh 2px #fff, 30vw 65vh 1.5px #fff,
+        70vw 75vh 2px #fff, 80vw 60vh 1px rgba(255,255,255,0.6), 90vw 80vh 1.5px #fff;
+    opacity: 0.6;
+    animation: starPulse 4s infinite ease-in-out alternate;
 }
+
+/* 月亮圖示：黃色發光暈染與懸浮感 */
+#sleep-overlay .sleep-icon {
+    font-size: 6rem;
+    filter: drop-shadow(0 0 15px rgba(254, 211, 48, 0.6));
+    animation: moonFloat 4s infinite ease-in-out;
+}
+
+/* 顯示鬧鐘設定時間：簡約細體字，高雅淡灰色 */
+#display-set-alarm-time {
+    font-size: 2.2rem;
+    color: #cbd5e1;
+    font-weight: 300;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    text-shadow: 0 0 10px rgba(203, 213, 225, 0.3);
+}
+
+/* SLEEPING 提示文字：極致白光霓虹感與呼吸燈特效 */
+.sleep-text {
+    font-size: 4.5rem;
+    font-weight: 400;
+    letter-spacing: 12px;
+    color: #ffffff;
+    text-shadow: 
+        0 0 10px rgba(255, 255, 255, 0.8),
+        0 0 20px rgba(255, 255, 255, 0.4),
+        0 0 30px rgba(84, 160, 255, 0.2);
+    padding-left: 12px; /* 修正 letter-spacing 產生的視覺右偏 */
+    animation: textGlow 3s infinite ease-in-out;
+}
+
+/* 睡眠模式相關動畫定義 */
+@keyframes starPulse {
+    0% { opacity: 0.4; }
+    100% { opacity: 0.8; }
+}
+
+@keyframes moonFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
+
+@keyframes textGlow {
+    0%, 100% {
+        text-shadow: 
+            0 0 10px rgba(255, 255, 255, 0.8),
+            0 0 20px rgba(255, 255, 255, 0.4),
+            0 0 30px rgba(84, 160, 255, 0.2);
+        opacity: 0.95;
+    }
+    50% {
+        text-shadow: 
+            0 0 15px rgba(255, 255, 255, 0.9),
+            0 0 30px rgba(84, 160, 255, 0.6),
+            0 0 45px rgba(84, 160, 255, 0.4);
+        opacity: 1;
+    }
+}
+/* ================================================================== */
 
 #room-full-overlay {
     position: fixed;
@@ -299,7 +364,7 @@ body {
 .time-display {
     display: flex;
     align-items: center;
-    font-size: 4rem;
+    font-size: 3rem;
     font-weight: bold;
     color: #7a7570;
 }

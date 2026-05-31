@@ -1,21 +1,15 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-    <!-- ------------------------------------------------------------------ -->
-    <!-- Lobby 大廳頁面 - HTML 只定義靜態畫面結構與 DOM 元素，行為邏輯在 app.js 內實作 -->
-    <!-- 此頁面由 Python 伺服器透過 static 檔案路由提供，入口為 server/main.py 的 ASGIApp -->
-    <!-- ------------------------------------------------------------------ -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tethered Alarm - Lobby</title>
 
-    <!-- 引入外部工具：Socket.io 的客戶端程式碼，讓 lobby 能與後端伺服器通訊 -->
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=2.0">
 
 </head>
 <body>
-    <!-- 房間已滿遮罩層：當後端回傳 join_failed 時顯示，強制使用者重新選房 -->
     <div id="room-full-overlay">
         <div class="room-full-content">
             <div class="room-full-icon">🚫</div>
@@ -24,21 +18,16 @@
         </div>
     </div>
 
-    <!-- 房間資訊與邀請連結 -->
     <div class="room-info">
         <button class="lang-btn" id="btn-toggle-language">English / 中文</button>
         <div><span id="text-room-id-label">ROOM ID</span>: <span id="displayRoomId">----</span></div>
         <button class="invite-btn" id="btn-invite">Copy Invite Link</button>
     </div>
 
-    <!-- 鬧鐘時間區域 -->
-    <!-- 這個時間顯示當前時刻，點擊後可進入鬧鐘設定（僅限房長且 4 人到齊） -->
     <div class="alarm-clock" id="alarmTimeDisplay">07:00</div>
     
-    <!-- 鬧鐘下方提示 (僅在四人到齊且還沒設定鬧鐘時顯示) -->
     <div id="alarm-hint">All players here! Host can set the alarm.</div>
 
-    <!-- 角色插槽區域 -->
     <div class="players-container">
         <div class="player-slot" id="slot-blue">
             <div class="host-crown">👑</div>
@@ -66,25 +55,19 @@
         </div>
     </div>
 
-    <!-- 準備按鈕 -->
-    <!-- 這個按鈕會觸發 sendReady()，並透過 app.js 將準備狀態送到後端 -->
     <button class="ready-button" id="btn-ready">READY</button>
 
-    <!-- 倒數計時層 -->
     <div id="countdown-overlay">
         <div id="text-starting">GAME STARTING IN</div>
         <div id="countdown-number">3</div>
     </div>
 
-    <!-- 睡眠模式層 (鬧鐘設定後顯示) -->
     <div id="sleep-overlay">
         <div class="sleep-icon">🌙</div>
         <div id="display-set-alarm-time"></div>
         <div class="sleep-text" id="text-sleeping">SLEEPING...</div>
     </div>
 
-    <!-- 時間選擇器模態框 -->
-    <!-- 這個區塊由 app.js 控制顯示/隱藏，負責讓房長設定起床鬧鐘時間 -->
     <div id="time-picker-modal">
         <div class="time-picker-content">
             <div class="time-display">
@@ -105,17 +88,13 @@
                 <button id="cancel-time-btn">取消</button>
             </div>
         </div>
-        <!-- 顯示剩餘時間 -->
         <div id="time-remaining-hint"></div>
     </div>
 
-    <!-- 硬體警告訊息 (預設隱藏) -->
     <div id="speaker-warning"></div>
 
-    <!-- 測試音量按鈕 -->
     <button id="btn-test-volume" class="test-vol-btn"></button>
 
-    <!-- 載入 lobby 行為與 Socket.IO 互動邏輯 -->
     <script src="/static/app.js" defer></script>
 </body>
 </html>
