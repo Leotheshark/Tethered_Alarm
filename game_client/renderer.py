@@ -297,9 +297,38 @@ class Renderer:
         # self._draw_charge_hud(render_data)
 
         # 5. 通關過場動畫 (Clear Animation Overlay)
-        #    新版以 _cleared/_failed 旗標結束，暫時不送 clear_anim 資料 → stage 0 靜默不畫；
-        #    待結束流程接上 clear_anim 排程後即可自動顯示。
-        self._draw_clear_overlay(clear_anim)
+        clear_stage = clear_anim.get("stage", 0)
+        if 0 < clear_stage < 5:
+            clear_timer = clear_anim.get("timer", 0.0)
+            alpha = 128
+            if clear_stage == 1:
+                # 階段 1 (Pre Pause)，讓黑底根據時間慢慢變暗 (Fade-in)
+                progress = min(1.0, clear_timer / CLEAR_PRE_PAUSE_TIME)
+                alpha = int(128 * progress)
+                
+            if alpha > 0:
+                dim_overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
+                dim_overlay.fill((0, 0, 0, alpha))
+                self.screen.blit(dim_overlay, (0, 0))
+        self._draw_anim_overlay(clear_anim, "C L E A R !")
+
+        # 開場動畫
+        start_anim = render_data.get("start_anim", {"stage": 0, "timer": 0.0})
+        start_stage = start_anim.get("stage", 0)
+        if 0 < start_stage < 5:
+            start_timer = start_anim.get("timer", 0.0)
+            alpha = 128
+            if start_stage == 4:
+                # 階段 4 (布條滑出時)，讓黑底根據時間慢慢變淡，營造開燈感
+                progress = min(1.0, start_timer / CLEAR_OUT_TIME)
+                alpha = int(128 * (1.0 - progress))
+                
+            if alpha > 0:
+                # 在動畫期間繪製全畫面半透明黑底，讓背景變暗
+                dim_overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
+                dim_overlay.fill((0, 0, 0, alpha))
+                self.screen.blit(dim_overlay, (0, 0))
+        self._draw_anim_overlay(start_anim, "S T A R T !", text_color=(84, 160, 255))
 
         # 失敗投票覆蓋層（四人倒地後出現，蓋在最上層）
         self._draw_defeat_vote(render_data.get("defeat_vote"))
@@ -374,7 +403,7 @@ class Renderer:
         self.screen.blit(text, (rect.centerx - text.get_width() // 2,
                                 rect.centery - text.get_height() // 2))
 
-    def _draw_clear_overlay(self, anim):
+    def _draw_anim_overlay(self, anim, text_str, text_color=(255, 50, 50)):
         stage = anim.get("stage", 0)
         if stage == 0 or stage == 5:
             return
@@ -383,13 +412,11 @@ class Renderer:
         timer = anim.get("timer", 0.0)
 
         banner_color = (255, 255, 255)
-        text_color = (255, 50, 50)
 
         banner_x = 0
         banner_w = sw
 
         # 準備文字 Surface (300px 粗體)
-        text_str = "C L E A R !"
         base_text_surf = self.font_clear.render(text_str, True, text_color)
         current_alpha = 255
         current_scale = 1.0
