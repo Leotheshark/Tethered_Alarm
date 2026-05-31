@@ -32,7 +32,11 @@ const translations = {
         menu_join: '加入房間',
         menu_connect: '連線',
         menu_back: '返回',
-        ip_placeholder: '輸入好友的 Tailscale IP'
+        ip_placeholder: '輸入好友的 Tailscale IP',
+        error_host_disconnected: '房主已斷線，房間已關閉。',
+        error_need_four: '需滿四人才能設定鬧鐘',
+        error_host_only: '只有房主可以設定鬧鐘',
+        btn_ok: '確定'
     },
     en: {
         room_id_label: 'IP',
@@ -58,7 +62,11 @@ const translations = {
         menu_join: 'Join Room',
         menu_connect: 'Connect',
         menu_back: 'Back',
-        ip_placeholder: 'Enter Host Tailscale IP'
+        ip_placeholder: 'Enter Host Tailscale IP',
+        error_host_disconnected: 'Host disconnected. Room closed.',
+        error_need_four: 'Need four players before setting alarm',
+        error_host_only: 'Only host can set alarm',
+        btn_ok: 'OK'
     }
 };
 
@@ -78,7 +86,9 @@ const textSleeping = document.getElementById('text-sleeping');
 const roomFullText = document.getElementById('text-room-full');
 const tryAnotherRoomButton = document.getElementById('btn-try-another-room');
 const testVolButton = document.getElementById('btn-test-volume');
-const langBtn = document.getElementById('btn-toggle-language'); // 宣告語言切換按鈕變數，避免 ReferenceError
+// 取得全局語言切換按鈕
+const langButtons = document.querySelectorAll('.lang-btn');
+const langButtonGlobal = document.getElementById('btn-toggle-language-global');
 const urlParams = new URLSearchParams(window.location.search);
 
 // 主選單元素
@@ -97,6 +107,10 @@ let lastIsSpeaker = true; // 紀錄最後一次收到的硬體狀態
 let isTestingVolume = false; // 紀錄是否正在測試音量
 let myColor = 'blue'; // 紀錄伺服器指派給我的顏色
 let isLaunchingGame = false; // 避免重複啟動遊戲進程的旗標
+
+// --- 取得大廳返回按鈕並綁定事件 ---
+const lobbyBackButton = document.getElementById('btn-lobby-back');
+lobbyBackButton.onclick = leaveRoom;
 
 function updateLanguage() {
     // 根據 currentLang 更新頁面文字，支援中文和英文
@@ -121,14 +135,25 @@ function updateLanguage() {
 
     if (testVolButton) testVolButton.textContent = isTestingVolume ? t.playing : t.test_volume;
     
+    // 更新錯誤遮罩的按鈕文字
+    const btnErrorOk = document.getElementById('btn-error-ok');
+    if (btnErrorOk) {
+        btnErrorOk.textContent = t.btn_ok;
+    }
+
     // 更新「你」的標籤
     document.querySelectorAll('.me-arrow span').forEach(el => el.textContent = t.you);
     
-    // 更新語言切換按鈕文字，並根據目前語言將標籤標註為紅色 (lang-active)
-    if (langBtn) {
-        const zhLabel = currentLang === 'zh' ? '<span class="lang-active">中文</span>' : '中文';
-        const enLabel = currentLang === 'en' ? '<span class="lang-active">English</span>' : 'English';
-        langBtn.innerHTML = `${enLabel} / ${zhLabel}`;
+    // 更新所有語言切換按鈕文字，並根據目前語言將標籤標註為紅色 (lang-active)
+    const zhLabel = currentLang === 'zh' ? '<span class="lang-active">中文</span>' : '中文';
+    const enLabel = currentLang === 'en' ? '<span class="lang-active">English</span>' : 'English';
+    
+    if (langButtonGlobal) {
+        langButtonGlobal.innerHTML = `${enLabel} / ${zhLabel}`;
+    } else {
+        langButtons.forEach(btn => {
+            btn.innerHTML = `${enLabel} / ${zhLabel}`;
+        });
     }
 
     // 更新硬體警告文字
@@ -237,6 +262,12 @@ class SocketManager {
                 this.uiCallbacks.onGameOver(data);
             }
         });
+
+        this.socket.on('error_msg', data => {
+            if (this.uiCallbacks.onErrorMessage) {
+                this.uiCallbacks.onErrorMessage(data);
+            }
+        });
     }
 
     // 加入房間：建立 socket 連線後立刻送出 join_room 請求
@@ -341,9 +372,9 @@ const uiCallbacks = {
         const isFull = state.count === 4;
         const alarmHint = document.getElementById('alarm-hint');
         // isBusy 只信任 server 權威狀態 state.alarm_time（鬧鐘設定中才有值，觸發/結束時為 None）。
-        // 不再 OR 本地 dataset.triggered 旗標——那是脆弱的競態溫床（曾導致旗標殘留把 alarmClock
-        // 鎖死）。dataset.triggered 僅作 onAlarmTriggered 的本地記錄，不參與業務判定。
-        const isBusy = !!state.alarm_time || state.is_triggered;
+        // 同時納入本地 dataset.triggered 旗標，確保鬧鐘響起瞬間 UI 立即鎖死，直到遊戲結束回到大廳。
+        const isBusy = !!state.alarm_time || state.is_triggered || alarmHint.dataset.triggered === 'true';
+        
         alarmClock.style.cursor = isHost && isFull && !isBusy ? 'pointer' : 'default';
         alarmHint.style.visibility = isFull && !isBusy ? 'visible' : 'hidden';
         if (!isBusy) alarmHint.dataset.triggered = 'false';
@@ -389,12 +420,28 @@ const uiCallbacks = {
         const alarmHint = document.getElementById('alarm-hint');
         alarmHint.style.visibility = 'hidden';
         alarmHint.dataset.triggered = 'true';
+        alarmClock.style.cursor = 'default'; // 立即停用時鐘點擊功能
 
         // 通知本地 Python 將此視窗置頂並播放鬧鐘聲音
         if (window.pywebview) {
             if (window.pywebview.api.trigger_topmost) window.pywebview.api.trigger_topmost();
             if (window.pywebview.api.start_alarm_sound) window.pywebview.api.start_alarm_sound();
         }
+    },
+    onErrorMessage: (data) => {
+        const t = translations[currentLang];
+        // 將伺服器傳來的原始英文字串映射到本地語系翻譯
+        const msgMap = {
+            "Host disconnected. Room closed.": t.error_host_disconnected,
+            "Need four players before setting alarm": t.error_need_four,
+            "Only host can set alarm": t.error_host_only
+        };
+
+        const msgEl = document.getElementById('error-message');
+        if (msgEl) {
+            msgEl.textContent = msgMap[data.message] || data.message;
+        }
+        document.getElementById('error-overlay').style.display = 'flex';
     },
     onJoinFailed: data => {
         if (data.reason === 'full') {
@@ -405,6 +452,7 @@ const uiCallbacks = {
         console.log(`遊戲結束，原因: ${data.reason}`);
         isLaunchingGame = false; // 重置啟動旗標，允許下一次遊戲
         // 當遊戲結束（成功或投降），恢復大廳視窗
+        lobbyBackButton.style.display = 'flex';
         if (window.pywebview && window.pywebview.api.restore_lobby) {
             window.pywebview.api.restore_lobby();
         }
@@ -426,6 +474,7 @@ const uiCallbacks = {
     },
     onGameStarted: () => {
         document.getElementById('countdown-overlay').style.display = 'none';
+        lobbyBackButton.style.display = 'none'; // 進入遊戲時隱藏返回鍵
         console.log('伺服器確認：遊戲正式開始！');
 
         // 防護：若本機已經啟動過遊戲進程，則忽略重複的廣播
@@ -533,7 +582,8 @@ cancelTimeBtn.onclick = hideTimePicker;
 if (readyButton) readyButton.onclick = sendReady;
 if (inviteButton) inviteButton.onclick = copyInviteLink;
 
-if (langBtn) langBtn.onclick = toggleLanguage;
+// 綁定所有語言切換按鈕點擊事件
+langButtons.forEach(btn => btn.onclick = toggleLanguage);
 
 if (testVolButton) {
     testVolButton.onclick = () => {
@@ -560,6 +610,7 @@ function connectToRoom(serverUrl, roomId) {
     console.log(`正在連線至 ${serverUrl} 房間: ${roomId}`);
     ROOM_ID = roomId;
     document.getElementById('displayRoomId').textContent = ROOM_ID;
+    lobbyBackButton.style.display = 'flex';
     mainMenuOverlay.style.display = 'none';
     
     // 建立 Socket 連線
@@ -572,6 +623,34 @@ function connectToRoom(serverUrl, roomId) {
                 showTimePicker();
             }
         };
+    }
+}
+
+function leaveRoom(skipConfirm = false) {
+    // 如果是房主斷線等強制情況 (skipConfirm)，就不再跳出確認視窗
+    if (!skipConfirm) {
+        if (!confirm(currentLang === 'zh' ? '確定要離開房間嗎？' : 'Leave the room?')) return;
+    }
+
+    document.getElementById('error-overlay').style.display = 'none';
+
+    // 1. 斷開 Socket 連線
+    if (socketManager && socketManager.socket) {
+        socketManager.socket.disconnect();
+        socketManager = null;
+    }
+
+    // 2. 重置狀態與 UI
+    ROOM_ID = null;
+    lobbyBackButton.style.display = 'none';
+    mainMenuOverlay.style.display = 'flex';
+    
+    // 3. 清除 URL 中的房間參數 (如果有)
+    window.history.replaceState({}, document.title, window.location.pathname);
+
+    // 4. 停止 BGM
+    if (window.pywebview && window.pywebview.api.stop_bgm) {
+        window.pywebview.api.stop_bgm();
     }
 }
 
@@ -627,6 +706,11 @@ function hideRoomFullOverlay() {
 tryAnotherRoomButton.onclick = () => {
     hideRoomFullOverlay();
     window.location.href = window.location.pathname;
+};
+
+// 綁定錯誤遮罩的 OK 鍵
+document.getElementById('btn-error-ok').onclick = () => {
+    leaveRoom(true); // 強制退出，不跳確認框
 };
 
 updateLanguage();

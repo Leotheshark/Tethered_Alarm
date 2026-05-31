@@ -16,6 +16,14 @@
 
 </head>
 <body>
+    <!-- 大廳返回主選單按鈕 -->
+    <button id="btn-lobby-back" class="lobby-back-btn" style="display: none;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </button>
+    
+    <!-- 全局語言切換按鈕：固定在右上角 -->
+    <button class="lang-btn" id="btn-toggle-language-global">English / 中文</button>
+
     <!-- 主選單首頁 -->
     <div id="main-menu-overlay">
         <div class="menu-content">
@@ -43,9 +51,17 @@
         </div>
     </div>
 
+    <!-- 錯誤訊息遮罩層：當房主斷線或發生錯誤時顯示 -->
+    <div id="error-overlay">
+        <div class="error-content">
+            <div class="error-icon">😵</div>
+            <div id="error-message">Message here</div>
+            <button id="btn-error-ok">OK</button>
+        </div>
+    </div>
+
     <!-- 房間資訊與邀請連結 -->
     <div class="room-info">
-        <button class="lang-btn" id="btn-toggle-language">English / 中文</button>
         <div><span id="text-room-id-label">IP</span>: <span id="displayRoomId">----</span></div>
         <button class="invite-btn" id="btn-invite">Copy Host IP</button>
     </div>

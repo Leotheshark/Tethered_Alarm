@@ -27,7 +27,7 @@ def main():
         server_env = os.environ.copy()
         server_env["MAX_PLAYERS"] = "4" # 確保房間需要 4 人才能開始
         server_env["DEBUG_WINDOWED"] = "0"
-        server_env["DEBUG_TITLE"] = f"Player {i+1} ({'HOST' if i==0 else 'GUEST'})"
+        server_env["DEBUG_TITLE"] = f"({'HOST' if i==0 else 'GUEST'})"
         
         # 模擬 Host 與 Guest 的行為差異
         if i > 0:
