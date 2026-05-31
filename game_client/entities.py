@@ -83,7 +83,6 @@ class Ghost(Entity):
             self.direction = "idle"
             
         self.visual_key = f"{self.color_key}_{self.direction}"
-        if dx == 0 and dy == 0: return
 
         # 1. 斜向移動正規化：確保斜著走的速度與水平/垂直一致 (1.0x 而非 1.414x)
         nx, ny = dx, dy
@@ -113,9 +112,28 @@ class Ghost(Entity):
             if others:
                 # 建立虛擬的新位置矩形，檢查是否與其他實體重疊
                 new_rect = pygame.Rect(nx - radius, ny - radius, radius * 2, radius * 2)
+                # 取得目前位置矩形
+                curr_rect = pygame.Rect(self.x - radius, self.y - radius, radius * 2, radius * 2)
+
                 for other_rect in others:
                     if new_rect.colliderect(other_rect):
-                        return True
+                        # 如果原本就沒撞到，現在撞到了，絕對阻擋（正常碰撞）
+                        if not curr_rect.colliderect(other_rect):
+                            return True
+                        
+                        # 如果原本就已經重疊（延遲導致），則計算「距離變化」
+                        # 只有當新位置距離對方中心「更近」時，才阻擋（防止穿過）
+                        old_dist_sq = (self.x - other_rect.centerx)**2 + (self.y - other_rect.centery)**2
+                        new_dist_sq = (nx - other_rect.centerx)**2 + (ny - other_rect.centery)**2
+                        if new_dist_sq < old_dist_sq:
+                            return True # 試圖穿過或擠入對方中心，阻擋
+                        
+                        # 如果原本就已經重疊（延遲導致），則計算「距離變化」
+                        # 只有當新位置距離對方中心「更近」時，才阻擋（防止穿過）
+                        old_dist_sq = (self.x - other_rect.centerx)**2 + (self.y - other_rect.centery)**2
+                        new_dist_sq = (nx - other_rect.centerx)**2 + (ny - other_rect.centery)**2
+                        if new_dist_sq < old_dist_sq:
+                            return True # 試圖穿過或擠入對方中心，阻擋
             
             return False
 
@@ -137,14 +155,32 @@ class Ghost(Entity):
                         self.x += math.copysign(min(abs(offset_x), move_dist_y * 1.2), offset_x)
 
         # 5. 分軸位移 (Sliding Physics)：分開處理 X 與 Y，達成流暢的「滑牆」效果
-        if dx != 0:
+        if dx != 0 or dy != 0:
             new_x = self.x + math.copysign(move_dist_x, dx)
             if not check_collision(new_x, self.y): self.x = new_x
-        if dy != 0:
             new_y = self.y + math.copysign(move_dist_y, dy)
             if not check_collision(self.x, new_y): self.y = new_y
 
-        # 6. 全域邊界限制 (Boundary Clamp)：確保角色不論在任何模式都不會跑出 1920x1080 視窗
+        # 6. 自動排斥 (Character Repulsion)
+        # 解決「一重疊就分開」的需求。即使玩家沒按鍵，只要偵測到重疊，系統會自動將兩者彈開。
+        if others:
+            for other_rect in others:
+                if self.rect.colliderect(other_rect):
+                    # 計算推擠向量 (從對方中心指向自己)
+                    px = self.x - other_rect.centerx
+                    py = self.y - other_rect.centery
+                    dist = math.hypot(px, py)
+                    if dist == 0: px, py, dist = 1, 0, 1 # 完全重合時隨機往右推
+                    
+                    # 排斥力強度：設定為玩家速度的一半，確保平滑分開且不產生劇烈抖動
+                    repel_dist = (self.speed * 0.6) * dt
+                    tx, ty = self.x + (px / dist) * repel_dist, self.y + (py / dist) * repel_dist
+                    
+                    # 只有在「遠離對方」且「不會被推入牆壁」的情況下才執行自動分離
+                    if not check_collision(tx, ty):
+                        self.x, self.y = tx, ty
+
+        # 7. 全域邊界限制 (Boundary Clamp)：確保角色不論在任何模式都不會跑出 1920x1080 視窗
         self.x = max(self.avatar_size, min(1920 - self.avatar_size, self.x))
         self.y = max(self.avatar_size, min(1080 - self.avatar_size, self.y))
 
