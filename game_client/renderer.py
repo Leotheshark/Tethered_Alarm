@@ -3,7 +3,8 @@ import pygame
 import math
 import os
 from visual_registry import VisualRegistry
-from constants import COLORS
+from gc_constants import COLORS
+from gc_paths import game_client_dir
 
 # 磚片類型 → 顏色對照
 _TILE_COLORS = {
@@ -57,7 +58,7 @@ CLEAR_OUT_TIME       = 0.3  # 布條帶著文字滑出時間
 class Renderer:
     def __init__(self, screen):
         self.screen = screen
-        base_path = os.path.dirname(os.path.abspath(__file__))
+        base_path = game_client_dir()
 
         # 內文與一般 UI 文字用 VT323（復古 CRT/終端機感）；大標題另用 Pixelify Sans
         # （較有份量的像素字），兩者分工讓標題更醒目、內文更耐讀。

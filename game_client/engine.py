@@ -24,7 +24,10 @@ from games.base_game import BaseLogicInterface
 
 _MINIGAME_CLASSES: dict[str, type] = {}
 
-_games_pkg_path = os.path.join(os.path.dirname(__file__), "games")
+# 掃描 games/ 實體目錄以動態發現小遊戲。用 game_client_dir() 而非 __file__，
+# 因打包後 __file__ 指向被攤平的位置，games/ 實際被放在 _MEIPASS/game_client/games。
+from gc_paths import game_client_dir
+_games_pkg_path = os.path.join(game_client_dir(), "games")
 for _finder, _module_name, _ispkg in pkgutil.iter_modules([_games_pkg_path]):
     if _module_name.startswith("_"):
         continue  # 跳過 __init__ 等私有模組

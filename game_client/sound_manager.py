@@ -7,6 +7,7 @@ SoundManager
 
 import os
 import pygame
+from gc_paths import game_client_dir
 
 
 class SoundManager:
@@ -29,7 +30,7 @@ class SoundManager:
         if not pygame.mixer.get_init():
             pygame.mixer.init()
             
-        self.sound_dir = sound_dir or os.path.join(os.path.dirname(__file__), "assets", "sounds")
+        self.sound_dir = sound_dir or os.path.join(game_client_dir(), "assets", "sounds")
         self.sounds = {}
         self.sound_volumes = {}  # 紀錄每個音效的原始音量設定
         self.channel_map = dict(self.DEFAULT_CHANNEL_MAP)

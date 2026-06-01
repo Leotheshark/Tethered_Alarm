@@ -19,6 +19,20 @@ from constants import ServerEvent # 引入伺服器事件常數
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 
+# 資源目錄錨點：開發模式與 PyInstaller 打包後的目錄結構不同，統一用 resource_path
+# 從「專案根」定位，避免依賴 base_dir 的相對推算。
+# 打包後 main.py 被收進 PYZ 頂層，__file__ 會解析成 _MEIPASS/main.py，
+# 使 base_dir = _MEIPASS（而非 _MEIPASS/server），於是 base_dir/static、
+# base_dir/../game_client/assets 全部指錯 → 大廳網頁回 404、音效/前端資源找不到。
+# 以下錨點改以 resource_path 直接指向 server/static 與 game_client/assets 的實際位置。
+if getattr(sys, "frozen", False):
+    from resource_path import resource_path
+    static_dir = resource_path("server", "static")
+    assets_dir = resource_path("game_client", "assets")
+else:
+    static_dir = os.path.join(base_dir, "static")
+    assets_dir = os.path.join(base_dir, "..", "game_client", "assets")
+
 class ServerState:
     """保存伺服器執行期間的共享狀態。"""
 
@@ -30,11 +44,11 @@ class ServerState:
         self.timeout_tasks = {}  # { (room_id, color): asyncio.Task }，追蹤斷線倒數任務
         self.uvicorn_server = None  # 持有 uvicorn.Server 以便退出時請求優雅關閉並釋放 5555 埠
 
-        # 音效資源路徑
-        self.bgm_path = os.path.join(base_dir, "..", "game_client", "assets", "sounds", "bgm_loop.ogg")
-        self.alarm_sound_path = os.path.join(base_dir, "..", "game_client", "assets", "sounds", "Alarm_1.ogg")
-        self.click_sound_path = os.path.join(base_dir, "..", "game_client", "assets", "sounds", "click.ogg")
-        self.all_ready_path = os.path.join(base_dir, "..", "game_client", "assets", "sounds", "all_ready.ogg")
+        # 音效資源路徑（assets_dir 已感知 frozen，指向 game_client/assets 實際位置）
+        self.bgm_path = os.path.join(assets_dir, "sounds", "bgm_loop.ogg")
+        self.alarm_sound_path = os.path.join(assets_dir, "sounds", "Alarm_1.ogg")
+        self.click_sound_path = os.path.join(assets_dir, "sounds", "click.ogg")
+        self.all_ready_path = os.path.join(assets_dir, "sounds", "all_ready.ogg")
         self.alarm_test_sound = None
         self.alarm_real_sound = None
         self.all_ready_sound = None
@@ -121,10 +135,10 @@ sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 app = socketio.ASGIApp(
     sio,
     static_files={
-        "/": os.path.join(base_dir, "static", "index.html"),
-        "/index.html": os.path.join(base_dir, "static", "index.html"),
-        "/static": os.path.join(base_dir, "static"),
-        "/assets": os.path.join(base_dir, "..", "game_client", "assets"),
+        "/": os.path.join(static_dir, "index.html"),
+        "/index.html": os.path.join(static_dir, "index.html"),
+        "/static": static_dir,
+        "/assets": assets_dir,
     },
 )
 
@@ -497,12 +511,13 @@ async def surrender(sid, data):
 
 # --- 啟動與視窗管理 ---
 def launch_game_client(room_id="default", server_url="http://127.0.0.1:5555", color="blue"):
-    """啟動 game_client/main.py，並注入連線資訊與角色顏色。"""
-    game_client_script = os.path.normpath(os.path.join(base_dir, "..", "game_client", "main.py"))
-    if not os.path.exists(game_client_script):
-        print("[server] game_client/main.py not found")
-        return
+    """啟動 Pygame game_client 進程，並注入連線資訊與角色顏色。
 
+    依執行環境決定如何啟動：
+      - 打包後（frozen）：sys.executable 就是本 exe，用 `本exe --game-client`
+        讓同一個執行檔以 game_client 角色再起一個進程（見 __main__ 的入口分流）。
+      - 開發模式：照舊用 `python game_client/main.py`。
+    """
     try:
         # 建立環境變數，讓 Pygame 進程繼承大廳的連線設定
         env = os.environ.copy()
@@ -511,15 +526,69 @@ def launch_game_client(room_id="default", server_url="http://127.0.0.1:5555", co
         env["PLAYER_COLOR"] = color
         # 強制 Pygame 啟動後立即顯示視窗
         env["FORCE_START"] = "1"
+        # 關鍵：game_client 進程不可再起 server，否則會重綁 5555 埠（WinError 10048）。
+        # 開發模式下 game_client/main.py 本來就不碰 server，但打包後子進程是同一支 exe，
+        # 入口分流會檢查此旗標以確保不誤入 server 路徑。
+        env["SKIP_SERVER"] = "1"
 
         print(f"[server] launching game client for {color} in room {room_id}")
-        subprocess.Popen(
-            [sys.executable, game_client_script], 
-            cwd=os.path.dirname(game_client_script),
-            env=env
-        )
+
+        if getattr(sys, "frozen", False):
+            # 打包後：用本 exe 自己 + 旗標，再起一個 game_client 角色的進程。
+            subprocess.Popen([sys.executable, "--game-client"], env=env)
+        else:
+            game_client_script = os.path.normpath(
+                os.path.join(base_dir, "..", "game_client", "main.py")
+            )
+            if not os.path.exists(game_client_script):
+                print("[server] game_client/main.py not found")
+                return
+            subprocess.Popen(
+                [sys.executable, game_client_script],
+                cwd=os.path.dirname(game_client_script),
+                env=env,
+            )
     except Exception as e:
         print(f"[server] failed to launch game client: {e}")
+
+
+def run_game_client():
+    """以 game_client 角色執行：啟動 Pygame 遊戲引擎，不碰 server / 大廳視窗。
+
+    打包後（frozen）整個專案是同一支 exe，launch_game_client() 會用
+    `本exe --game-client` 再起一個進程，該進程的入口（__main__）偵測到旗標後
+    呼叫本函式。等同於開發模式下直接執行 game_client/main.py 的效果。
+
+    game_client 的模組彼此以裸 import（from engine import ...）相依，靠 game_client
+    目錄在 sys.path 上才成立；故此處先把該目錄插入 sys.path 再 import。
+    """
+    if getattr(sys, "frozen", False):
+        # 打包後：game_client 內容由 PyInstaller 攤到 _MEIPASS/game_client。
+        from resource_path import resource_path
+        game_client_dir = resource_path("game_client")
+    else:
+        game_client_dir = os.path.normpath(os.path.join(base_dir, "..", "game_client"))
+
+    if game_client_dir not in sys.path:
+        sys.path.insert(0, game_client_dir)
+
+    # 延後到此處才 import，避免 server 角色啟動時被迫載入整套 Pygame 引擎。
+    # 註：game_client 的常數模組已更名為 gc_constants，避免與 server 端的
+    # constants.py 在打包後撞名（兩者會被攤平到同一頂層命名空間）。
+    from system import prevent_sleep, allow_sleep
+    from engine import GameEngine
+
+    prevent_sleep()
+    try:
+        print("[game_client] 正在啟動遊戲引擎...")
+        GameEngine().run()
+    except Exception as e:
+        import traceback
+        print(f"[game_client] 遊戲發生錯誤：{e}")
+        traceback.print_exc()
+    finally:
+        allow_sleep()
+        print("[game_client] 程式結束，恢復休眠設定")
 
 
 def run_server():
@@ -655,6 +724,14 @@ def cleanup():
 
 
 if __name__ == "__main__":
+    # 0. 入口分流：打包後整個專案是同一支 exe，launch_game_client() 會用
+    #    `本exe --game-client` 再起一個 game_client 角色的進程。偵測到此旗標時，
+    #    只跑 Pygame 遊戲引擎並直接退出，絕不進入下方的 server / 大廳流程
+    #    （否則會重綁 5555 埠並多開一個大廳視窗）。
+    if "--game-client" in sys.argv:
+        run_game_client()
+        os._exit(0)
+
     # 1. 系統準備：防止休眠
     SystemHelper.prevent_sleep()
 

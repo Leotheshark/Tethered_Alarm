@@ -41,3 +41,13 @@ credentials.*
 settings*.json
 .claude/.credentials.json
 CLAUDE.md
+
+# PyInstaller 打包產物（由 pyinstaller.spec 重新產生，不入版控）
+build/
+dist/
+*.manifest
+# 打包 / 冒煙測試暫存輸出
+build_log.txt
+smoke_test.txt
+gc_test*.txt
+game_client_test*.txt

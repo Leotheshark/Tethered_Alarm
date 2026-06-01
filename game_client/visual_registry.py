@@ -1,5 +1,6 @@
 import pygame
 import os
+from gc_paths import game_client_dir
 
 class VisualRegistry:
     """
@@ -31,8 +32,8 @@ class VisualRegistry:
         if key in cls._cache:
             return cls._cache[key]
 
-        # 取得 game_client 目錄路徑
-        base_path = os.path.dirname(os.path.abspath(__file__))
+        # 取得 game_client 資源根目錄（打包後會正確指向 _MEIPASS/game_client）
+        base_path = game_client_dir()
         
         # 嘗試可能的路徑 (相容單數 sprite 與複數 sprites 資料夾名稱)
         possible_paths = [
@@ -44,7 +45,8 @@ class VisualRegistry:
         path = next((p for p in possible_paths if os.path.exists(p)), None)
 
         if path is None:
-            print(f"[VisualRegistry] ❌ 錯誤: 找不到檔案 {filename}。請確認它存在於 assets/sprites/ 或 assets/image/ 中")
+            # 不用 emoji：Windows 主控台預設 cp950，print 含 emoji 會丟 UnicodeEncodeError 反而讓程式崩潰。
+            print(f"[VisualRegistry] [錯誤] 找不到檔案 {filename}。請確認它存在於 assets/sprites/ 或 assets/image/ 中")
             return None
 
         image = pygame.image.load(path).convert_alpha()
