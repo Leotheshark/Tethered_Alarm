@@ -47,7 +47,7 @@ _VOTE_COLORS = {
 
 # 通關動畫時長常數 (需與 BaseLogicInterface 同步)
 CLEAR_PRE_PAUSE_TIME = 2.0  # 布條滑入前的空白停頓
-CLEAR_IN_TIME        = 0.3  # 白色布條滑入時間
+CLEAR_IN_TIME        = 0.3  # 白色布條進入時間
 CLEAR_TEXT_PAUSE_TIME = 0.4  # 文字進場前的停頓時間
 CLEAR_TEXT_TIME      = 1.5  # 文字停留總時間 (含停頓、進場動畫與持續時間)
 CLEAR_TEXT_ANIM_TIME = 0.3  # 文字縮放與透明度漸變的持續時間
@@ -208,7 +208,9 @@ class Renderer:
         tile_colors = render_data.get("tile_colors", _TILE_COLORS)
         players  = render_data.get("players", {})
         pacmen   = render_data.get("pacmen", [])
+        knives   = render_data.get("knives", [])
         buttons  = render_data.get("buttons", [])
+        warning  = render_data.get("warning", {"active": False})
         clear_anim = render_data.get("clear_anim", {"stage": 0, "timer": 0.0})
 
         rows = len(tile_map)
@@ -260,13 +262,14 @@ class Renderer:
                     color = tile_colors.get(tile, _TILE_COLORS[2])
                     pygame.draw.rect(self.screen, color, (tx, ty, tile_size, tile_size))
 
-                # 磚片細節：按鈕畫亮綠正方形
+                # 磚片細節：按鈕畫亮綠正方形，迷霧陷阱畫霧點提示
                 if tile == 4:  # B 按鈕：中央畫小方塊提示
                     inner = 10
                     pygame.draw.rect(
                         self.screen, (120, 255, 120),
                         (tx + inner, ty + inner, tile_size - inner * 2, tile_size - inner * 2)
                     )
+
         # 1.5. 繪製互動按鈕 (原生 Pygame 繪圖實作發光)
         for btn in buttons:
             bx, by = int(btn["x"]) - ox, int(btn["y"]) - oy
@@ -390,27 +393,50 @@ class Renderer:
             for i in range(rescue_count):
                 pygame.draw.circle(self.screen, (255, 80, 80), (px - 12 + i * 8, py - radius - 12), 3)
 
-        # 3. 繪製所有 Pac-Man（精靈圖，若無資源則 fallback 為圓形）
+        # 3. 繪製所有 Pac-Man
         for pm in pacmen:
             pmx = int(pm.get("x", 0)) - ox
             pmy = int(pm.get("y", 0)) - oy
-            
             vkey = pm.get("visual_key")
             surface = VisualRegistry.get_surface(vkey) if vkey else None
+
             if surface:
-                frame_idx = pm.get("frame_index", 0) % 2
+                # 處理 1x2 影格切割 (Pac-Man 在 ReversePacman 中定義為 2 欄動畫)
+                cols = 2
+                frame_idx = pm.get("frame_index", 0) % cols
                 w, h = surface.get_size()
-                frame_w = w // 2
+                frame_w = w // cols
                 area = pygame.Rect(frame_idx * frame_w, 0, frame_w, h)
                 self.screen.blit(surface, (pmx - frame_w // 2, pmy - h // 2), area)
             else:
+                # Fallback: 若圖片尚未載入或遺失，繪製原本的黃色圓形
                 pm_radius = pm.get("avatar_size", 15)
                 pygame.draw.circle(self.screen, (255, 220, 0), (pmx, pmy), pm_radius)
                 pygame.draw.circle(self.screen, (200, 160, 0), (pmx, pmy), pm_radius, 2)
 
+        # 3.2 繪製飛刀
+        for kn in knives:
+            kx, ky = int(kn["x"]) - ox, int(kn["y"]) - oy
+            surface = VisualRegistry.get_surface(kn["visual_key"])
+            if surface:
+                # 如果飛刀正在淡出 (fade_timer > 0)，設定透明度
+                if not kn["is_active"] and kn["fade_timer"] > 0:
+                    # 假設淡出時長為 1.0 秒
+                    alpha = int(255 * kn["fade_timer"])
+                    surface = surface.copy()
+                    surface.set_alpha(alpha)
+                
+                self.screen.blit(surface, (kx - surface.get_width() // 2, ky - surface.get_height() // 2))
+            else:
+                # Fallback: 繪製小灰色矩形
+                pygame.draw.rect(self.screen, (150, 150, 150), (kx - 15, ky - 15, 30, 30))
+
         # 3.5. 致盲迷霧：本地玩家踩到迷霧時，蓋暗幕並在其周圍留一個清晰圓
         if render_data.get("fog_active"):
             self._draw_fog(render_data, players, local_color, ox, oy)
+
+        # 3.3 繪製飛刀預警 (移至迷霧後繪製，確保預警文字不被致盲黑幕遮擋)
+        self._draw_knife_warning(warning)
 
         # 4. HUD：原本用於顯示玩家個人蓄能條，現已廢棄（改由地圖上的 ColorButton 顯示）
         # self._draw_charge_hud(render_data)
@@ -451,6 +477,41 @@ class Renderer:
 
         # 失敗投票覆蓋層（四人倒地後出現，蓋在最上層）
         self._draw_defeat_vote(render_data.get("defeat_vote"))
+
+    def _draw_knife_warning(self, warning):
+        """在飛刀生成的方向邊緣繪製預警文字與倒數"""
+        if not warning or not warning.get("active"):
+            return
+            
+        sw, sh = self.screen.get_size()
+        # warning["direction"] 是飛刀移動的方向
+        move_dir = str(warning.get("direction", "")).lower()
+        timer = max(0.0, warning.get("timer", 0.0))
+        
+        margin = 100
+        pos_kwargs = {}
+
+        if move_dir == "right": # 從左方生成往右飛
+            from_side = "LEFT"
+            pos_kwargs = {"midleft": (margin, sh // 2)}
+        elif move_dir == "left": # 從右方生成往左飛
+            from_side = "RIGHT"
+            pos_kwargs = {"midright": (sw - margin, sh // 2)}
+        elif move_dir == "down": # 從上方生成往下飛
+            from_side = "TOP"
+            pos_kwargs = {"midtop": (sw // 2, margin)}
+        elif move_dir == "up": # 從下方生成往上飛
+            from_side = "BOTTOM"
+            pos_kwargs = {"midbottom": (sw // 2, sh - margin)}
+        else:
+            pos_kwargs = {"center": (sw // 2, 200)}
+
+        msg = str(int(timer) + 1)
+        text_surf = self.font_warning.render(msg, True, (255, 50, 50))
+        text_surf.set_alpha(150) # 增加一點不透明度使其更醒目
+        
+        rect = text_surf.get_rect(**pos_kwargs)
+        self.screen.blit(text_surf, rect)
 
     def _draw_defeat_vote(self, vote):
         """繪製失敗投票畫面：半透明黑底 + 標題/倒數 + 兩個可點按鈕（含票數）+ 四色投票明細。
@@ -605,7 +666,7 @@ class Renderer:
 
     def _draw_fog(self, render_data, players, local_color, ox, oy):
         """
-        致盲迷霧：印出 fog.png。
+        致盲迷霧：以半透明暗幕蓋住整個畫面，只在本地玩家周圍留一個帶柔邊的清晰圓。
         清晰圓中心採用本地玩家的「螢幕座標」實算（相機在地圖邊緣會夾邊，玩家未必置中）。
         """
         sw, sh = self.screen.get_size()

@@ -72,10 +72,11 @@ class GameEngine:
         self.sound_manager.load_sound("button_in", "button_in.ogg", volume=0.8)
         self.sound_manager.load_sound("button_out", "button_out.ogg", volume=0.8)
         self.sound_manager.load_sound("charged", "charged.ogg", volume=0.8)
-        self.sound_manager.load_sound("eat", "eat.ogg", volume=0.8)
+        self.sound_manager.load_sound("eat", "eat.ogg", volume=1.0)
         self.sound_manager.load_sound("blind", "blind.ogg", volume=0.8)
+        self.sound_manager.load_sound("countdown", "countdown.ogg", volume=0.8) # 載入倒數音效
         # 根據環境變數決定主音量：若設定 MUTE_AUDIO 則初始音量為 0 (多開測試用)
-        self.base_volume = 0.0 if os.environ.get('MUTE_AUDIO') == '1' else 0.5
+        self.base_volume = 0.0 if os.environ.get('MUTE_AUDIO') == '1' else 0.6
         self.sound_manager.set_master_volume(self.base_volume)
 
         self.renderer = None  # 視窗建立後才初始化渲染器
@@ -239,6 +240,8 @@ class GameEngine:
         for d in ["up", "down", "left", "right"]:
             VisualRegistry.load_image(f"pacman_{d}", f"pacman_{d}.png")
         VisualRegistry.load_image("dead", "dead.png")
+        for d in ["up", "down", "left", "right"]:
+            VisualRegistry.load_image(f"knife_{d}", f"knife_{d}.png")
 
     def _is_minigame_ready(self):
         """
@@ -526,19 +529,6 @@ class GameEngine:
                 other_rects = [g.rect for g in self.remote_ghosts.values() if not g.disconnected]
                 self.player.move(dx, dy, dt, others=other_rects)
                 self.entity_manager.update_all(dt)
-
-            # 全域音量狀態監控 (處理致盲效果)
-            currently_blind = False
-            if self.active_game:
-                lp = self.active_game.players.get(self.active_game.local_color)
-                currently_blind = bool(lp and getattr(lp, 'fog_timer', 0) > 0)
-            
-            if currently_blind != self._is_blind_muffled:
-                self._is_blind_muffled = currently_blind
-                self.sound_manager.set_master_volume(self.base_volume, muffled=currently_blind)
-
-            # 定期廣播基礎位置 (Presence Heartbeat)
-            # 即使在小遊戲中也要發送，讓後進的 Debug Client 能看見所有人並啟動遊戲
             self._sync_timer += dt
             if self._sync_timer >= self._SYNC_INTERVAL:
                 self._sync_timer = 0.0
@@ -554,15 +544,24 @@ class GameEngine:
                 
                 self.network.send_position(send_x, send_y, send_dx, send_dy)
 
-            # C. 處理渲染
+            # C. 處理渲染與音效全域狀態
             self.renderer.clear()
+            currently_blind = False
             if self.active_game:
                 # 小遊戲模式：繪製遊戲世界（地圖、玩家、Pac-Man 等）
                 render_data = self.active_game.get_render_data()
+                # 取得小遊戲封裝好的致盲狀態（確保與黑幕視覺效果同步）
+                currently_blind = render_data.get("fog_active", False)
                 self.renderer.draw_game(render_data, self.active_game.local_color)
             else:
                 # 一般模式：繪製角色實體
                 self.renderer.draw_world(self.entity_manager)
+
+            # 更新悶音效果 (當致盲狀態改變時)
+            if currently_blind != self._is_blind_muffled:
+                self._is_blind_muffled = currently_blind
+                self.sound_manager.set_master_volume(self.base_volume, muffled=currently_blind)
+
             self.renderer.draw_ui(self.clock)
             self.renderer.draw_status_ui(self._disconnected_colors, self._show_surrender_ui, self._local_disconnected)
             self.renderer.display()

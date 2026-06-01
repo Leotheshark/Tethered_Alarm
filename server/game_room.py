@@ -10,6 +10,7 @@ class GameRoom:
         self.game_client_sids = {}      # { sid: color }，追蹤在線的 game_client
         self.is_triggered = False       # 鬧鐘是否已響起（處於準備階段）
         self.current_minigame = None    # 本局要載入的小遊戲名稱；start_game 時設定。
+        self.played_games_count = 0     # 用於輪流切換小遊戲
         self.minigame_dispatched = False  # 本局是否已對全房派發過 start_minigame（含權威名單）。
                                         # 待 4 個 game_client 都訂閱後才派發一次，避免名單殘缺或重複廣播。
 
