@@ -49,7 +49,8 @@ _VOTE_COLORS = {
 CLEAR_PRE_PAUSE_TIME = 2.0  # 布條滑入前的空白停頓
 CLEAR_IN_TIME        = 0.3  # 白色布條進入時間
 CLEAR_TEXT_PAUSE_TIME = 0.4  # 文字進場前的停頓時間
-CLEAR_TEXT_TIME      = 1.5  # 文字停留總時間 (含停頓、進場動畫與持續時間)
+CLEAR_TEXT_TIME      = 1.8  # 文字停留總時間 (含停頓、進場、持續與淡出)
+CLEAR_TEXT_FADE_OUT_TIME = 0.3 # 文字淡出時間
 CLEAR_TEXT_ANIM_TIME = 0.3  # 文字縮放與透明度漸變的持續時間
 CLEAR_OUT_TIME       = 0.3  # 布條帶著文字滑出時間
 
@@ -70,7 +71,7 @@ class Renderer:
         # 大標題（START! / CLEAR! / ALL DOWN!）統一用 Pixelify Sans
         self.font_title = self._load_font(title_path, 72)              # ALL DOWN! 等中型標題
         self.font_warning = self._load_font(title_path, 120) # 飛刀預警倒數
-        self.font_clear = self._load_font(title_path, 240, fallback_bold=True)  # START! / CLEAR! 動畫大字
+        self.font_clear = self._load_font(title_path, 180, fallback_bold=True)  # START! / CLEAR! 動畫大字
 
         # 失敗投票按鈕的點擊區域（由 _draw_defeat_vote 每幀更新；engine 讀此做滑鼠命中測試）
         self.vote_continue_rect = None
@@ -484,10 +485,10 @@ class Renderer:
         # 開場動畫
         start_anim = render_data.get("start_anim", {"stage": 0, "timer": 0.0})
         start_stage = start_anim.get("stage", 0)
-        if 0 < start_stage < 5:
+        if 0 < start_stage < 6:
             start_timer = start_anim.get("timer", 0.0)
             alpha = 128
-            if start_stage == 4:
+            if start_stage == 5:
                 # 階段 4 (布條滑出時)，讓黑底根據時間慢慢變淡，營造開燈感
                 progress = min(1.0, start_timer / CLEAR_OUT_TIME)
                 alpha = int(128 * (1.0 - progress))
@@ -497,7 +498,18 @@ class Renderer:
                 dim_overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
                 dim_overlay.fill((0, 0, 0, alpha))
                 self.screen.blit(dim_overlay, (0, 0))
-        self._draw_anim_overlay(start_anim, "S T A R T !", text_color=(84, 160, 255))
+
+            # 根據階段決定文字內容與映射渲染階段
+            display_text = "S T A R T !"
+            mapped_stage = start_stage
+            if start_stage == 3:
+                display_text = start_anim.get("title", "GAME")
+            elif start_stage == 4:
+                mapped_stage = 3 # 使用文字進場邏輯
+            elif start_stage == 5:
+                mapped_stage = 4 # 使用布條滑出邏輯
+                
+            self._draw_anim_overlay({"stage": mapped_stage, "timer": start_timer}, display_text, text_color=(84, 160, 255))
 
         # 失敗投票覆蓋層（四人倒地後出現，蓋在最上層）
         self._draw_defeat_vote(render_data.get("defeat_vote"))
@@ -646,20 +658,27 @@ class Renderer:
             banner_x = 0
             banner_w = sw
 
+            in_end = CLEAR_TEXT_PAUSE_TIME + CLEAR_TEXT_ANIM_TIME
+            fade_start = CLEAR_TEXT_TIME - CLEAR_TEXT_FADE_OUT_TIME
+
             if timer < CLEAR_TEXT_PAUSE_TIME:
                 # 第一階段：停頓期 (文字隱藏)
                 current_alpha = 0
                 current_scale = 2.5
-            elif timer < (CLEAR_TEXT_PAUSE_TIME + CLEAR_TEXT_ANIM_TIME):
+            elif timer < in_end:
                 # 第二階段：縮放進場動畫
                 anim_timer = timer - CLEAR_TEXT_PAUSE_TIME
                 anim_prog = anim_timer / CLEAR_TEXT_ANIM_TIME
                 current_scale = 2.5 - 1.5 * anim_prog
                 current_alpha = int(255 * anim_prog)
-            else:
+            elif timer < fade_start:
                 # 第三階段：穩定停留期
                 current_scale = 1.0
                 current_alpha = 255
+            else:
+                # 第四階段：淡出
+                fade_prog = (timer - fade_start) / CLEAR_TEXT_FADE_OUT_TIME
+                current_alpha = int(255 * (1.0 - max(0.0, min(1.0, fade_prog))))
 
         elif stage == 4:  # Slide Out: 帶著文字向右收走
             progress = min(1.0, timer / CLEAR_OUT_TIME)

@@ -461,11 +461,13 @@ class GameEngine:
                 if start_stage != self._last_start_stage:
                     if start_stage == 2:
                         self.sound_manager.play("swoosh_in")
-                    elif start_stage == 3:
+                    elif start_stage == 3: # 遊戲名稱進場
                         self.sound_manager.play("stamp")
-                    elif start_stage == 4:
-                        self.sound_manager.play("swoosh_out")
+                    elif start_stage == 4: # START! 進場
+                        self.sound_manager.play("stamp")
                     elif start_stage == 5:
+                        self.sound_manager.play("swoosh_out")
+                    elif start_stage == 6:
                         # 開場動畫結束，正式啟動 BGM
                         self.sound_manager.play_music("game_bgm.ogg", volume=1, loops=-1)
                     self._last_start_stage = start_stage

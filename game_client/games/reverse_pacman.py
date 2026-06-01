@@ -450,7 +450,7 @@ class ReversePacman(PlayerGameLogicInterface):
             return
         
         # 開場動畫邏輯
-        if getattr(self, "start_anim_stage", 0) > 0 and self.start_anim_stage < 5:
+        if getattr(self, "start_anim_stage", 0) > 0 and self.start_anim_stage < 6:
             self.start_anim_timer += dt
             if self.start_anim_stage == 1 and self.start_anim_timer >= 1.0:
                 self.start_anim_stage = 2
@@ -458,11 +458,14 @@ class ReversePacman(PlayerGameLogicInterface):
             elif self.start_anim_stage == 2 and self.start_anim_timer >= 0.3:
                 self.start_anim_stage = 3
                 self.start_anim_timer = 0.0
-            elif self.start_anim_stage == 3 and self.start_anim_timer >= 1.5:
+            elif self.start_anim_stage == 3 and self.start_anim_timer >= 1.8: # Game Title
                 self.start_anim_stage = 4
                 self.start_anim_timer = 0.0
-            elif self.start_anim_stage == 4 and self.start_anim_timer >= 0.3:
+            elif self.start_anim_stage == 4 and self.start_anim_timer >= 1.5: # START!
                 self.start_anim_stage = 5
+                self.start_anim_timer = 0.0
+            elif self.start_anim_stage == 5 and self.start_anim_timer >= 0.3:
+                self.start_anim_stage = 6
                 self.start_anim_timer = 0.0
                 self.is_input_locked = False
             
@@ -583,7 +586,11 @@ class ReversePacman(PlayerGameLogicInterface):
             "fog_active":  bool(local and local.fog_timer > 0 and self.clear_anim_stage == 0),
             "fog_radius":  FOG_VISION_RADIUS,
             "clear_anim":  self._get_clear_anim_data(),
-            "start_anim":  {"stage": getattr(self, "start_anim_stage", 0), "timer": getattr(self, "start_anim_timer", 0.0)},
+            "start_anim":  {
+                "stage": getattr(self, "start_anim_stage", 0), 
+                "timer": getattr(self, "start_anim_timer", 0.0),
+                "title": "Reversed Pac-Man"
+            },
             "pacmen": [
                 {
                     "x": pm.x, "y": pm.y, "avatar_size": pm.avatar_size,
@@ -1075,7 +1082,7 @@ class ReversePacman(PlayerGameLogicInterface):
         player.visual_key = "dead"
         self.sound_manager.play("eat")
         player.rescue_progress = 0.0
-        print(f"[ReversePacman] {player.color_key} caught! rescue_count={player.rescue_count}")
+        print(f"[ReversePacman] {player.color_key} caught! rescue_count={player.先不要生成程式碼_count}")
 
         try:
             self.socket_client.send_game_event({

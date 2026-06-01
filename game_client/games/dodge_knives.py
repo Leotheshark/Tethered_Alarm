@@ -70,18 +70,18 @@ SPAWN_TILES = {
 }
 
 # 按鈕位置與顏色配置
-# BUTTON_CONFIGS = [
-#     {"pos": (9, 16), "color": "red"},
-#     {"pos": (8, 15), "color": "blue"},
-#     {"pos": (9, 15), "color": "green"},
-#     {"pos": (8, 16), "color": "pink"},
-# ]
 BUTTON_CONFIGS = [
-    {"pos": (2, 2), "color": "red"},
-    {"pos": (15, 29), "color": "blue"},
-    {"pos": (2, 29), "color": "green"},
-    {"pos": (15, 2), "color": "pink"},
+    {"pos": (9, 16), "color": "red"},
+    {"pos": (8, 15), "color": "blue"},
+    {"pos": (9, 15), "color": "green"},
+    {"pos": (8, 16), "color": "pink"},
 ]
+# BUTTON_CONFIGS = [
+#     {"pos": (2, 2), "color": "red"},
+#     {"pos": (15, 29), "color": "blue"},
+#     {"pos": (2, 29), "color": "green"},
+#     {"pos": (15, 2), "color": "pink"},
+# ]
 
 # ─── 遊戲數值常數 ─────────────────────────────────────────────────────────────
 
@@ -272,7 +272,7 @@ class DodgeKnives(BaseLogicInterface):
             return
 
         # 開場動畫邏輯
-        if getattr(self, "start_anim_stage", 0) > 0 and self.start_anim_stage < 5:
+        if getattr(self, "start_anim_stage", 0) > 0 and self.start_anim_stage < 6:
             self.start_anim_timer += dt
             if self.start_anim_stage == 1 and self.start_anim_timer >= 1.0:
                 self.start_anim_stage = 2
@@ -280,11 +280,14 @@ class DodgeKnives(BaseLogicInterface):
             elif self.start_anim_stage == 2 and self.start_anim_timer >= 0.3:
                 self.start_anim_stage = 3
                 self.start_anim_timer = 0.0
-            elif self.start_anim_stage == 3 and self.start_anim_timer >= 1.5:
+            elif self.start_anim_stage == 3 and self.start_anim_timer >= 1.8: # Game Title
                 self.start_anim_stage = 4
                 self.start_anim_timer = 0.0
-            elif self.start_anim_stage == 4 and self.start_anim_timer >= 0.3:
+            elif self.start_anim_stage == 4 and self.start_anim_timer >= 1.5: # START! (不需淡出直接銜接滑出)
                 self.start_anim_stage = 5
+                self.start_anim_timer = 0.0
+            elif self.start_anim_stage == 5 and self.start_anim_timer >= 0.3:
+                self.start_anim_stage = 6
                 self.start_anim_timer = 0.0
                 self.is_input_locked = False
             
@@ -698,7 +701,11 @@ class DodgeKnives(BaseLogicInterface):
             },
             "fog_active": bool(local and local.fog_timer > 0 and self.clear_anim_stage == 0),
             "fog_radius": 50,
-            "start_anim": {"stage": getattr(self, "start_anim_stage", 0), "timer": getattr(self, "start_anim_timer", 0.0)},
+            "start_anim": {
+                "stage": getattr(self, "start_anim_stage", 0), 
+                "timer": getattr(self, "start_anim_timer", 0.0),
+                "title": "Dodge Lolipops !"
+            },
             "buttons": [
                 {
                     "x": b.x, "y": b.y, 
