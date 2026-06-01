@@ -114,6 +114,7 @@ PACMAN_MAX_COUNT            = 4     # Pac-Man 數量上限
 
 # 失敗投票機制：四人同時倒地後，進入投票決定是否重玩本局
 DEFEAT_VOTE_TIME    = 30.0  # 投票倒數秒數（逾時未投視為放棄）
+RESTART_DELAY       = 5.0   # 有人投「繼續」後，投票剩餘時間最多壓到這麼多秒（只縮不延）
 
 
 def tile_center(row, col):
@@ -1005,7 +1006,9 @@ class ReversePacman(BaseLogicInterface):
         if not (all_voted or timed_out):
             return  # 尚未收齊也未逾時，繼續等
 
-        # 結算：只要有人投「繼續」(True) 就重玩本局；否則（全放棄或逾時無人投）放棄。
+        # 結算：逾時 = 那些沒投的人視同投了 give up。
+        # 因此只要有人投過「繼續」(True) 就重玩本局；否則（其餘全 give up，含逾時未投者）放棄。
+        # 補的是 give up(False)，不影響 any() 只看有無 True，故無需真的補票即等價。
         if any(self._votes.values()):
             print("[ReversePacman] defeat vote -> CONTINUE (someone voted to continue)")
             try:
@@ -1014,7 +1017,7 @@ class ReversePacman(BaseLogicInterface):
                 print(f"[ReversePacman] vote_result(continue) broadcast failed: {e}")
             self.on_enter()  # 完全重置本局
         else:
-            print("[ReversePacman] defeat vote -> ABORT (all gave up / timed out)")
+            print("[ReversePacman] defeat vote -> ABORT (all gave up / timed out = give up)")
             self._failed = True
             self._voting = False
             try:
@@ -1024,9 +1027,17 @@ class ReversePacman(BaseLogicInterface):
                 print(f"[ReversePacman] vote_result(abort)/surrender failed: {e}")
 
     def _apply_vote(self, color, value):
-        """記錄某顏色玩家的投票（以 color 為鍵天然去重，重投以最後一次為準）。"""
+        """記錄某顏色玩家的投票（以 color 為鍵天然去重，重投以最後一次為準）。
+
+        有人投「繼續」(value=True) 時，把投票剩餘時間壓到最多 5 秒：
+        若投票當下剩餘 > 5 秒則縮成 5 秒，剩餘 <= 5 秒則維持不動（只縮不延）。
+        作法是把 _vote_timer 往前推到「再過 5 秒就逾時」的位置，用 max 保證單調遞增、
+        天然冪等（之後再有 continue 票也不會把倒數拉長）。各 client 都會經過 _apply_vote，
+        故壓縮在四端同步發生，倒數顯示與最終結算（逾時走 any(votes)→continue）保持一致。"""
         if color in self.players:
             self._votes[color] = bool(value)
+            if value:
+                self._vote_timer = max(self._vote_timer, DEFEAT_VOTE_TIME - RESTART_DELAY)
 
     def _update_pacman_ai(self, pm: PacManState, dt: float):
         """
