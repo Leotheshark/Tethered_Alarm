@@ -380,6 +380,9 @@ class ReversePacman(PlayerGameLogicInterface):
             p.spike_timer = 0.0
             p.fog_timer = 0.0
             p.charge = 0.0
+            p.current_dx = 0
+            p.current_dy = 0
+            p.direction = "idle"
 
         # 重置 Pac-Man
         self.pacmen = [

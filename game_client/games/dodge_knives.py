@@ -54,8 +54,8 @@ TILE_SIZE = 60
 AVATAR_SIZE = 24
 BUTTON_HOLD_TIME = 10  # 玩家需要踩在按鈕上的總秒數
 KNIFE_SPEED = 800
-INITIAL_SPAWN_INTERVAL = 20.0
-MIN_SPAWN_INTERVAL = 10.0
+INITIAL_SPAWN_INTERVAL = 25.0
+MIN_SPAWN_INTERVAL = 15.0
 DEFEAT_VOTE_TIME = 30.0
 WARNING_DURATION = 10.0
 RESCUE_RADIUS = 70
@@ -217,6 +217,11 @@ class DodgeKnives(BaseLogicInterface):
             reset_sync_state(p.sync, float(cx), float(cy))
             p.is_alive = True
             p.visual_key = f"{p.color_key}_{p.direction}"
+            p.rescue_count = 0
+            p.spike_timer = 0.0
+            p.fog_timer = 0.0
+            p.current_dx = 0
+            p.current_dy = 0
         self._cleared = False
         self.open_gates.clear()
 
@@ -375,14 +380,14 @@ class DodgeKnives(BaseLogicInterface):
                 self._broadcast_spawn_event(self._next_direction)
                 
                 # 更新下一次生成的參數
-                self._current_interval = max(MIN_SPAWN_INTERVAL, self._current_interval - 1.0)
+                self._current_interval = max(MIN_SPAWN_INTERVAL, self._current_interval - 0.5)
                 self._spawn_timer = self._current_interval
                 self._next_direction = random.choice(["up", "down", "left", "right"])
                 self._warning_active = False
                 self._last_countdown_int = -1
                 self._broadcast_warning_state(False)
 
-        # 更新飛刀位置與移除逻辑
+        # 更新飛刀位置與移除邏輯
         for kn in self.active_knives[:]:
             kn.update(dt)
             # 簡單移除邏輯：飛出地圖外一定距離或淡出結束則刪除
@@ -553,9 +558,12 @@ class DodgeKnives(BaseLogicInterface):
             if state["being_rescued"]:
                 if in_range:
                     state["progress"] += dt
+                    # 關鍵：同步屬性給渲染器
+                    target.rescue_progress = state["progress"] / RESCUE_HOLD_TIME
                     if state["progress"] >= RESCUE_HOLD_TIME:
                         # 救援完成
                         target.is_alive = True
+                        target.rescue_progress = 0.0
                         state["progress"] = 0.0
                         state["being_rescued"] = False
                         self.socket_client.send_game_event({
@@ -735,7 +743,8 @@ class DodgeKnives(BaseLogicInterface):
         if not local: return {}
         return {
             "type": "player_pos", "color": self.local_color,
-            "x": local.x, "y": local.y, "dx": local.current_dx, "dy": local.current_dy
+            "x": local.x, "y": local.y, "dx": local.current_dx, "dy": local.current_dy,
+            "is_alive": local.is_alive
         }
 
     def receive_sync_data(self, data: dict):
@@ -744,6 +753,10 @@ class DodgeKnives(BaseLogicInterface):
             color = data.get("color")
             p = self.players.get(color)
             if p and color != self.local_color:
+                # 同步存活狀態，確保最終一致性（防止事件封包遺失產生的狀態漂移）
+                if "is_alive" in data:
+                    p.is_alive = data["is_alive"]
+
                 rdx, rdy = data.get("dx", 0.0), data.get("dy", 0.0)
                 # 更新遠端玩家的動畫朝向
                 if rdx > 0: p.direction = "right"

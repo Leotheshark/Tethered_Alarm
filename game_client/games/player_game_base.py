@@ -345,9 +345,12 @@ class PlayerGameLogicInterface(BaseLogicInterface, ABC):
                 if in_range:
                     # 繼續救援
                     state["progress"] += dt
+                    # 同步進度到玩家物件，讓渲染器看得到
+                    target.rescue_progress = state["progress"] / rescue_hold_time
                     if state["progress"] >= rescue_hold_time:
                         # 救援完成
                         target.is_alive = True
+                        target.rescue_progress = 0.0
                         target.visual_key = f"{target.color_key}_idle"
                         state["progress"] = 0.0
                         state["being_rescued"] = False
@@ -364,6 +367,7 @@ class PlayerGameLogicInterface(BaseLogicInterface, ABC):
                 else:
                     # 離開救援範圍：中斷救援
                     if state["progress"] > 0:
+                        target.rescue_progress = 0.0
                         state["being_rescued"] = False
                         state["progress"] = 0.0
                         try:
