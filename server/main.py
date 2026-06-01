@@ -47,7 +47,7 @@ class ServerState:
         """播放大廳背景音樂 (由 Python 原生播放，不受瀏覽器限制)"""
         if os.path.exists(self.bgm_path) and not pygame.mixer.music.get_busy():
             pygame.mixer.music.load(self.bgm_path)
-            pygame.mixer.music.set_volume(0.5)
+            pygame.mixer.music.set_volume(0.3)
             pygame.mixer.music.play(-1)  # -1 代表循環播放
 
     def stop_lobby_bgm(self):
@@ -60,6 +60,7 @@ class ServerState:
             if not self.alarm_real_sound and os.path.exists(self.alarm_sound_path):
                 self.alarm_real_sound = pygame.mixer.Sound(self.alarm_sound_path)
             if self.alarm_real_sound:
+                self.alarm_real_sound.set_volume(1.0)
                 self.alarm_real_sound.play(loops=-1)  # -1 代表無限循環
         except Exception as e:
             print(f"[server] failed to play alarm: {e}")
@@ -105,7 +106,7 @@ class ServerState:
             if self.alarm_test_sound:
                 # 測試時先暫停背景音樂
                 pygame.mixer.music.pause()
-                self.alarm_test_sound.set_volume(0.5)
+                self.alarm_test_sound.set_volume(1.0)
                 self.alarm_test_sound.play()
                 return self.alarm_test_sound.get_length()
         except Exception as e:
@@ -272,13 +273,16 @@ async def alarm_monitor():
             try:
                 h, m = map(int, room.alarm_time.split(":"))
                 alarm_dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
-                if alarm_dt < now:
+                
+                # 只有當鬧鐘時間已經過去超過 1 分鐘，我們才將其視為明天的鬧鐘。
+                # 這可以避免鬧鐘剛過幾秒就被判定為「明天」，導致 diff 變成正的 24 小時。
+                if alarm_dt < now - timedelta(minutes=1):
                     alarm_dt += timedelta(days=1)
 
                 diff = (alarm_dt - now).total_seconds()
                 min_diff = min(min_diff, diff)
 
-                if -30 < diff <= 0:
+                if -60 < diff <= 0:
                     print(f"[alarm] trigger room {room_id} at {room.alarm_time}")
                     room.is_triggered = True
                     await sio.emit(ServerEvent.ALARM_TRIGGERED, {"time": room.alarm_time}, room=room_id)

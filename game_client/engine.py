@@ -63,7 +63,7 @@ class GameEngine:
 
         # 2.6. 建立音效管理器，負責統一載入、頻道、音量與淡入行為
         self.sound_manager = SoundManager()
-        self.sound_manager.load_sound("alarm", "Alarm_1.ogg", volume=0.8)
+        self.sound_manager.load_sound("alarm", "Alarm_1.ogg", volume=1.0)
         # 預載通關動畫所需音效
         self.sound_manager.load_sound("swoosh_in", "swoosh_in.ogg", volume=0.8)
         self.sound_manager.load_sound("stamp", "stamp.ogg", volume=0.8)

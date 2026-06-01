@@ -327,11 +327,11 @@ body {
     animation: moonFloat 4s infinite ease-in-out;
 }
 
-/* 顯示鬧鐘設定時間：簡約細體字，高雅淡灰色 */
+/* 顯示鬧鐘設定時間：醒目粗體字，高雅淡灰色 */
 #display-set-alarm-time {
     font-size: 2.2rem;
     color: #cbd5e1;
-    font-weight: 300;
+    font-weight: 500;
     letter-spacing: 4px;
     text-transform: uppercase;
     text-shadow: 0 0 10px rgba(203, 213, 225, 0.3);
@@ -339,7 +339,7 @@ body {
 /* SLEEPING 提示文字：極致白光霓虹感與呼吸燈特效 */
 .sleep-text {
     font-size: 4.5rem;
-    font-weight: 400;
+    font-weight: 600;
     letter-spacing: 12px;
     color: #ffffff;
     text-shadow: 
