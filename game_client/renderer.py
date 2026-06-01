@@ -405,7 +405,7 @@ class Renderer:
             # 暫時倒地時繪製救援進度弧線
             if not is_alive and rescue_prog > 0:
                 pygame.draw.circle(self.screen, (80, 80, 80), (px, py), radius + 2, 3) # 繪製外圈
-                frac = min(rescue_prog / 2.0, 1.0)  # RESCUE_HOLD_TIME=2.0
+                frac = min(rescue_prog, 1.0)
                 end_angle = -math.pi / 2 + frac * 2 * math.pi
                 pygame.draw.arc(
                     self.screen, (255, 220, 50),
