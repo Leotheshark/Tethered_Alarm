@@ -236,6 +236,8 @@ class GameEngine:
         for c in _colors:
             for s in _states:
                 VisualRegistry.load_image(f"{c}_{s}", f"{c}_{s}.png")
+        for d in ["up", "down", "left", "right"]:
+            VisualRegistry.load_image(f"pacman_{d}", f"pacman_{d}.png")
         VisualRegistry.load_image("dead", "dead.png")
 
     def _is_minigame_ready(self):
@@ -359,12 +361,11 @@ class GameEngine:
                 self.active_game = game_cls(self.network, player_id_list, self.sound_manager)
                 self.active_game.on_enter()
                 
-                # 透過 SoundManager 啟動遊戲 BGM，保持 Engine 程式碼整潔
-                self.sound_manager.play_music("game_bgm.ogg", volume=1, loops=-1)
+                # BGM 延後至開場動畫結束後播放 (在 update 中監測)
                 
                 self._bgm_faded = False
                 self._last_clear_stage = 0
-                self._last_start_stage = 0
+                self._last_start_stage = self.active_game.start_anim_stage
                 print(f"[Engine] minigame started: {game_name}")
             else:
                 print(f"[Engine] unknown minigame: {game_name}")
@@ -452,6 +453,20 @@ class GameEngine:
                 self.active_game.handle_event({"type": "move", "dx": dx, "dy": dy})
                 self.active_game.update(dt)
 
+                # 監測開場動畫階段切換，播放對應音效
+                start_stage = getattr(self.active_game, "start_anim_stage", 0)
+                if start_stage != self._last_start_stage:
+                    if start_stage == 2:
+                        self.sound_manager.play("swoosh_in")
+                    elif start_stage == 3:
+                        self.sound_manager.play("stamp")
+                    elif start_stage == 4:
+                        self.sound_manager.play("swoosh_out")
+                    elif start_stage == 5:
+                        # 開場動畫結束，正式啟動 BGM
+                        self.sound_manager.play_music("game_bgm.ogg", volume=1, loops=-1)
+                    self._last_start_stage = start_stage
+
                 # 監測通關動畫階段切換，播放對應音效
                 if self.active_game.clear_anim_stage != self._last_clear_stage:
                     curr_stage = self.active_game.clear_anim_stage
@@ -466,17 +481,6 @@ class GameEngine:
                         self.sound_manager.play("swoosh_out")
                     
                     self._last_clear_stage = curr_stage
-
-                # 監測開場動畫階段切換，播放對應音效
-                start_stage = getattr(self.active_game, "start_anim_stage", 0)
-                if start_stage != self._last_start_stage:
-                    if start_stage == 2:
-                        self.sound_manager.play("swoosh_in")
-                    elif start_stage == 3:
-                        self.sound_manager.play("stamp")
-                    elif start_stage == 4:
-                        self.sound_manager.play("swoosh_out")
-                    self._last_start_stage = start_stage
 
                 # 定期廣播本地玩家在小遊戲中的位置（讓隊友看到自己）
                 self._game_sync_timer += dt

@@ -1,14 +1,15 @@
 # --- 渲染模組 ---
 import pygame
 import math
+import os
 from visual_registry import VisualRegistry
 from constants import COLORS
 
 # 磚片類型 → 顏色對照
 _TILE_COLORS = {
     0: (0, 0, 100),       # W 牆壁：深藍色
-    1: (255, 230, 210),   # E 空地：背景色
-    2: (255, 230, 210),   # P（已廢棄，地圖載入時轉為空地；保留色避免舊地圖殘留索引出錯）
+    1: (220, 170, 140),   # E 空地：背景色
+    2: (220, 170, 140),   # P（已廢棄，地圖載入時轉為空地；保留色避免舊地圖殘留索引出錯）
     3: (180, 60, 60),     # G 閘門（關閉）：紅色
     4: (60, 180, 60),     # B 按鈕：綠色
     5: (180, 100, 40),    # S 釘板：橘棕色
@@ -19,7 +20,7 @@ _TILE_COLORS = {
 _PLAYER_COLORS = COLORS
 
 # 通關動畫時長常數 (需與 BaseLogicInterface 同步)
-CLEAR_PRE_PAUSE_TIME = 1.0  # 布條滑入前的空白停頓
+CLEAR_PRE_PAUSE_TIME = 2.0  # 布條滑入前的空白停頓
 CLEAR_IN_TIME        = 0.3  # 白色布條滑入時間
 CLEAR_TEXT_PAUSE_TIME = 0.4  # 文字進場前的停頓時間
 CLEAR_TEXT_TIME      = 1.5  # 文字停留總時間 (含停頓、進場動畫與持續時間)
@@ -35,6 +36,43 @@ class Renderer:
         # 失敗投票按鈕的點擊區域（由 _draw_defeat_vote 每幀更新；engine 讀此做滑鼠命中測試）
         self.vote_continue_rect = None
         self.vote_giveup_rect = None
+
+        # 載入牆壁圖片：使用 assets/image/wall.png (原始尺寸已符合 60x60px)
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        wall_path = os.path.join(base_path, "assets", "image", "wall.png")
+        try:
+            self.wall_img = pygame.image.load(wall_path).convert_alpha()
+            print(f"[Renderer] Successfully loaded wall texture: {wall_path}")
+        except Exception as e:
+            print(f"[Renderer] Failed to load wall image at {wall_path}: {e}")
+            self.wall_img = None
+
+        # 載入地板圖片：使用 assets/image/ground.png (原始尺寸已符合 60x60px)
+        ground_path = os.path.join(base_path, "assets", "image", "ground.png")
+        try:
+            self.ground_img = pygame.image.load(ground_path).convert_alpha()
+            print(f"[Renderer] Successfully loaded ground texture: {ground_path}")
+        except Exception as e:
+            print(f"[Renderer] Failed to load ground image at {ground_path}: {e}")
+            self.ground_img = None
+
+        # 載入閘門圖片：使用 assets/image/gate.png (原始尺寸已符合 60x60px)
+        gate_path = os.path.join(base_path, "assets", "image", "gate.png")
+        try:
+            self.gate_img = pygame.image.load(gate_path).convert_alpha()
+            print(f"[Renderer] Successfully loaded gate texture: {gate_path}")
+        except Exception as e:
+            print(f"[Renderer] Failed to load gate image at {gate_path}: {e}")
+            self.gate_img = None
+
+        # 載入迷霧圖片：使用 assets/image/fog.png
+        fog_path = os.path.join(base_path, "assets", "image", "fog.png")
+        try:
+            self.fog_img = pygame.image.load(fog_path).convert_alpha()
+            print(f"[Renderer] Successfully loaded fog texture: {fog_path}")
+        except Exception as e:
+            print(f"[Renderer] Failed to load fog image at {fog_path}: {e}")
+            self.fog_img = None
 
     def clear(self):
         """用背景色清空畫面"""
@@ -162,21 +200,26 @@ class Renderer:
                 tile = tile_map[r][c]
                 tx = c * tile_size - ox
                 ty = r * tile_size - oy
-                color = tile_colors.get(tile, _TILE_COLORS[2])
-                pygame.draw.rect(self.screen, color, (tx, ty, tile_size, tile_size))
 
-                # 磚片細節：按鈕畫亮綠正方形，迷霧陷阱畫霧點提示
+                if tile == 0 and self.wall_img:
+                    self.screen.blit(self.wall_img, (tx, ty))
+                elif (tile == 1 or tile == 2) and self.ground_img:
+                    self.screen.blit(self.ground_img, (tx, ty))
+                elif tile == 3 and self.gate_img:
+                    self.screen.blit(self.gate_img, (tx, ty))
+                elif tile == 6 and self.fog_img:
+                    self.screen.blit(self.fog_img, (tx, ty))
+                else:
+                    color = tile_colors.get(tile, _TILE_COLORS[2])
+                    pygame.draw.rect(self.screen, color, (tx, ty, tile_size, tile_size))
+
+                # 磚片細節：按鈕畫亮綠正方形
                 if tile == 4:  # B 按鈕：中央畫小方塊提示
                     inner = 10
                     pygame.draw.rect(
                         self.screen, (120, 255, 120),
                         (tx + inner, ty + inner, tile_size - inner * 2, tile_size - inner * 2)
                     )
-                elif tile == 6:  # F 迷霧陷阱：畫幾個霧點提示腳下有陷阱
-                    cy = ty + tile_size // 2
-                    for off in (-12, 0, 12):
-                        pygame.draw.circle(self.screen, (180, 160, 210), (tx + tile_size // 2 + off, cy), 4)
-
         # 1.5. 繪製互動按鈕 (原生 Pygame 繪圖實作發光)
         for btn in buttons:
             bx, by = int(btn["x"]) - ox, int(btn["y"]) - oy
@@ -226,6 +269,25 @@ class Renderer:
                 pygame.draw.rect(self.screen, color_rgb, (bx - size // 2, by - size // 2, size, size), border_radius=10)
                 pygame.draw.rect(self.screen, color_rgb, (bx - size // 2, by - size // 2, size, size), 3, border_radius=10)
             else:
+                # 充能點沒滿時的脈衝發光特效 (強效多層漸層邊框)
+                curr_t = pygame.time.get_ticks() / 1000.0
+                # 加快脈衝頻率 (4.0 -> 5.0)
+                pulse = (math.sin(curr_t * 2.0) + 1.0) / 2.0 
+                
+                # 裡面不發光，透過 10 層邊框疊加營造向外擴散的強烈漸層
+                for i in range(10):
+                    # 每一層的擴張距離與透明度遞減，初始透明度從 50 提升至 140
+                    layer_expand = int(pulse * (i + 1) * 2)
+                    glow_size = size + layer_expand
+                    glow_alpha = int((100 - i * 10) * pulse)
+                    
+                    if glow_alpha > 0:
+                        glow_surf = pygame.Surface((glow_size, glow_size), pygame.SRCALPHA)
+                        # 變動線寬：越靠近中心越厚 (4px -> 1px)
+                        glow_w = max(1, 4 - i // 3)
+                        pygame.draw.rect(glow_surf, (*color_rgb, glow_alpha), (0, 0, glow_size, glow_size), glow_w, border_radius=10 + layer_expand // 4)
+                        self.screen.blit(glow_surf, (bx - glow_size // 2, by - glow_size // 2))
+
                 # 未觸發狀態：外框直接使用 constants.py 定義的對應顏色
                 pygame.draw.rect(self.screen, color_rgb, (bx - size // 2, by - size // 2, size, size), 3, border_radius=10)
                 
@@ -281,13 +343,23 @@ class Renderer:
             for i in range(rescue_count):
                 pygame.draw.circle(self.screen, (255, 80, 80), (px - 12 + i * 8, py - radius - 12), 3)
 
-        # 3. 繪製所有 Pac-Man（黃色圓形；數量會隨時間複製增加）
+        # 3. 繪製所有 Pac-Man（精靈圖，若無資源則 fallback 為圓形）
         for pm in pacmen:
             pmx = int(pm.get("x", 0)) - ox
             pmy = int(pm.get("y", 0)) - oy
-            pm_radius = pm.get("avatar_size", 15)
-            pygame.draw.circle(self.screen, (255, 220, 0), (pmx, pmy), pm_radius)
-            pygame.draw.circle(self.screen, (200, 160, 0), (pmx, pmy), pm_radius, 2)
+            
+            vkey = pm.get("visual_key")
+            surface = VisualRegistry.get_surface(vkey) if vkey else None
+            if surface:
+                frame_idx = pm.get("frame_index", 0) % 2
+                w, h = surface.get_size()
+                frame_w = w // 2
+                area = pygame.Rect(frame_idx * frame_w, 0, frame_w, h)
+                self.screen.blit(surface, (pmx - frame_w // 2, pmy - h // 2), area)
+            else:
+                pm_radius = pm.get("avatar_size", 15)
+                pygame.draw.circle(self.screen, (255, 220, 0), (pmx, pmy), pm_radius)
+                pygame.draw.circle(self.screen, (200, 160, 0), (pmx, pmy), pm_radius, 2)
 
         # 3.5. 致盲迷霧：本地玩家踩到迷霧時，蓋暗幕並在其周圍留一個清晰圓
         if render_data.get("fog_active"):
@@ -482,7 +554,7 @@ class Renderer:
 
     def _draw_fog(self, render_data, players, local_color, ox, oy):
         """
-        致盲迷霧：以半透明暗幕蓋住整個畫面，只在本地玩家周圍留一個帶柔邊的清晰圓。
+        致盲迷霧：印出 fog.png。
         清晰圓中心採用本地玩家的「螢幕座標」實算（相機在地圖邊緣會夾邊，玩家未必置中）。
         """
         sw, sh = self.screen.get_size()

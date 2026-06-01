@@ -48,12 +48,12 @@ _FALLBACK_MAP_LAYOUT = [
     [W, P, W, W, P, W, P, W, W, W, W, W, P, W, W, W, W, W, P, W, W, W, W, W, P, W, P, W, W, W, W, W],  # 9
     [W, G, W, W, P, F, P, P, P, P, P, P, G, W, W, B, W, W, P, P, P, P, P, P, P, W, P, P, P, P, P, W],  # 10
     [W, P, W, W, P, W, P, W, W, W, W, W, P, W, W, P, W, W, P, W, W, W, W, W, P, W, P, W, W, W, P, W],  # 11
-    [W, P, W, W, P, W, P, W, W, W, W, W, P, W, W, P, W, W, P, W, W, W, W, W, P, W, P, W, W, W, P, W],  # 11
-    [W, P, W, W, P, W, P, P, P, P, P, P, P, P, P, P, P, P, F, P, P, W, P, P, P, W, P, W, W, W, P, W],  # 12
-    [W, P, W, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, W, W, P, W, P, W, W, W, P, W, W, W, P, W],  # 13
+    [W, P, W, W, P, W, P, W, W, W, W, W, P, W, W, P, W, W, P, W, W, W, W, W, P, W, P, W, W, W, P, W],  # 12
+    [W, P, W, W, P, W, P, P, P, P, P, P, P, P, P, P, P, P, F, P, P, W, P, P, P, W, P, W, W, W, P, W],  # 13
     [W, P, W, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, W, W, P, W, P, W, W, W, P, W, W, W, P, W],  # 14
-    [W, P, P, P, P, P, P, P, F, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, G, P, P, P, W],  # 15
-    [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],  # 16
+    [W, P, W, W, P, W, W, W, P, W, W, W, W, W, W, W, W, W, W, W, P, W, P, W, W, W, P, W, W, W, P, W],  # 15
+    [W, P, P, P, P, P, P, P, F, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, G, P, P, P, W],  # 16
+    [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],  # 17
 ]
 
 ROWS = len(_FALLBACK_MAP_LAYOUT)
@@ -64,9 +64,9 @@ AVATAR_SIZE = 24
 # ─── 玩家初始出生位置（格座標，依顏色）──────────────────────────────────────
 _FALLBACK_SPAWN_TILES = {
     "blue":  (1, 1),    # 左上
-    "green": (15, 30),  # 右下
+    "green": (16, 30),  # 右下
     "pink":  (1, 30),   # 右上
-    "red":   (15, 1),   # 左下
+    "red":   (16, 1),   # 左下
 }
 
 # Pac-Man 初始出生格（地圖中心，所有複製出的 Pac-Man 也從這裡誕生）
@@ -92,7 +92,7 @@ RESCUE_RADIUS       = 70
 RESCUE_HOLD_TIME    = 2.0
 SPIKE_SLOW_DURATION = 3.0
 PACMAN_BOOST_DURATION = 2.0 # 吃掉玩家後短暫加速秒數
-PACMAN_AI_INTERVAL  = 0.10  # 授權客戶端廣播 Pac-Man 位置的時間間隔（秒）
+PACMAN_AI_INTERVAL  = 0.05  # 提升廣播頻率至 20Hz 以對齊玩家同步
 
 # 復活累積永久減速：每被救一次，移速永久降一階，趨近地板值（幾乎動不了但仍能爬）
 REVIVE_SLOW_STEP    = 0.18  # 每次復活的減速階（移速 = base × (1 - count×step)）
@@ -300,8 +300,21 @@ class PacManState:
         # 格子對齊移動：鎖定下一個目標格的中心點，到達後再重新 BFS
         self.next_tile_x = float(cx)
         self.next_tile_y = float(cy)
+
+        self.direction = "left"         # 當前朝向：up, down, left, right
+        self.frame_index = 0            # 1x2 影格索引
+        self.animation_timer = 0.0      # 動畫計時
+        self.animation_speed = 0.3     # 影格切換間隔
+
         # 遠端同步狀態（target + Dead Reckoning），授權端不使用
         self.sync = RemoteSyncState(target_x=float(cx), target_y=float(cy))
+
+    def update(self, dt):
+        """更新動畫影格，確保頻率恆定且不隨轉向重置。"""
+        # 使用模數運算維持連續的計時器循環 (0.0 ~ 0.6s)
+        self.animation_timer = (self.animation_timer + dt) % (self.animation_speed * 2)
+        # 直接根據總時間算出影格索引 (0 或 1)，確保咬合節奏完全獨立於移動邏輯
+        self.frame_index = int(self.animation_timer // self.animation_speed)
 
     @property
     def speed(self):
@@ -543,7 +556,7 @@ class ReversePacman(BaseLogicInterface):
         # 非授權端的所有 Pac-Man：以同套 Dead Reckoning + LERP 更新（授權端用 AI 直接算）
         if not self.is_authority and self.clear_anim_stage == 0:
             for pm in self.pacmen:
-                tick_remote_sync(pm, pm.sync, dt, pm.base_speed, bounds=map_bounds)
+                tick_remote_sync(pm, pm.sync, dt, pm.speed, bounds=map_bounds)
 
         # 3. 處理救援進度 (改為自動觸發)
         if not self.is_input_locked:
@@ -577,14 +590,17 @@ class ReversePacman(BaseLogicInterface):
         if self.is_authority and self.clear_anim_stage == 0:
             self._escalate_pacmen()
             for pm in self.pacmen:
+                pm.update(dt)  # 授權端也要更新動畫計時
                 self._update_pacman_ai(pm, dt)
             self._pacman_broadcast_timer += dt
             if self._pacman_broadcast_timer >= PACMAN_AI_INTERVAL:
                 self._pacman_broadcast_timer = 0.0
                 self._broadcast_pacman_roster()
 
-        # 5. 更新所有 Pac-Man 的加速計時器
+        # 5. 更新所有 Pac-Man 的動畫計時與加速計時器（非授權端在此更新動畫）
         for pm in self.pacmen:
+            if not self.is_authority:
+                pm.update(dt)
             if pm.speed_boost_timer > 0:
                 pm.speed_boost_timer = max(0.0, pm.speed_boost_timer - dt)
 
@@ -617,7 +633,11 @@ class ReversePacman(BaseLogicInterface):
             "clear_anim":  self._get_clear_anim_data(),
             "start_anim":  {"stage": getattr(self, "start_anim_stage", 0), "timer": getattr(self, "start_anim_timer", 0.0)},
             "pacmen": [
-                {"x": pm.x, "y": pm.y, "avatar_size": pm.avatar_size}
+                {
+                    "x": pm.x, "y": pm.y, "avatar_size": pm.avatar_size,
+                    "visual_key": f"pacman_{pm.direction}",
+                    "frame_index": pm.frame_index,
+                }
                 for pm in self.pacmen
             ],
             "players": {
@@ -732,6 +752,15 @@ class ReversePacman(BaseLogicInterface):
                                     entry.get("x", pm.sync.target_x),
                                     entry.get("y", pm.sync.target_y),
                                     entry.get("dx", 0.0), entry.get("dy", 0.0))
+                # 同步當前實際速度，確保 Dead Reckoning 預測位移精確
+                pm.base_speed = entry.get("speed", pm.base_speed)
+                # 根據移動方向向量更新視覺朝向
+                pdx, pdy = entry.get("dx", 0.0), entry.get("dy", 0.0)
+                if abs(pdx) > abs(pdy):
+                    pm.direction = "right" if pdx > 0 else "left"
+                elif abs(pdy) > 0:
+                    pm.direction = "down" if pdy > 0 else "up"
+
             # 移除 authority 已不再廣播的（理論上只增不減，保險用）
             incoming_ids = {entry.get("id") for entry in incoming}
             self.pacmen = [pm for pm in self.pacmen if pm.id in incoming_ids]
@@ -917,7 +946,10 @@ class ReversePacman(BaseLogicInterface):
                 pm_dx, pm_dy = dx_raw / norm, dy_raw / norm
             else:
                 pm_dx, pm_dy = 0.0, 0.0
-            roster.append({"id": pm.id, "x": pm.x, "y": pm.y, "dx": pm_dx, "dy": pm_dy})
+            roster.append({
+                "id": pm.id, "x": pm.x, "y": pm.y, 
+                "dx": pm_dx, "dy": pm_dy, "speed": pm.speed
+            })
         try:
             self.socket_client.send_game_event({"type": "pacman_roster", "pacmen": roster})
         except Exception as e:
@@ -1042,6 +1074,12 @@ class ReversePacman(BaseLogicInterface):
             if dr == 0 and dc == 0:
                 self._check_pacman_catches(pm)
                 return
+            
+            # 根據 BFS 下一步方向更新視覺朝向
+            if dr < 0: pm.direction = "up"
+            elif dr > 0: pm.direction = "down"
+            elif dc < 0: pm.direction = "left"
+            elif dc > 0: pm.direction = "right"
 
             next_row = pm_row + dr
             next_col = pm_col + dc
