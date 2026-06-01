@@ -553,9 +553,10 @@ class DodgeKnives(BaseLogicInterface):
                 state["being_rescued"] = True
                 state["rescuer"] = self.local_color
                 state["progress"] = 0.0
-                self.socket_client.send_game_event({"type": "rescue_progress_start", "color": color})
+                self.socket_client.send_game_event({"type": "rescue_progress_start", "color": color, "rescuer": self.local_color})
 
-            if state["being_rescued"]:
+            # 只有當前標記的救援者才具備判定進度與中斷的權限
+            if state["being_rescued"] and state.get("rescuer") == self.local_color:
                 if in_range:
                     state["progress"] += dt
                     # 關鍵：同步屬性給渲染器
@@ -789,6 +790,7 @@ class DodgeKnives(BaseLogicInterface):
             if color not in self._rescue_progress:
                 self._rescue_progress[color] = {"progress": 0.0, "rescuer": None, "being_rescued": False}
             self._rescue_progress[color]["being_rescued"] = True
+            self._rescue_progress[color]["rescuer"] = data.get("rescuer")
 
         elif dtype == "rescue_progress_stop":
             color = data.get("color")

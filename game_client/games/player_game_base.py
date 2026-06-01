@@ -46,7 +46,7 @@ RESCUE_RADIUS = 70
 FOG_VISION_RADIUS = 50
 DEFEAT_VOTE_TIME = 30.0
 
-REVIVE_SLOW_STEP = 0.18
+REVIVE_SLOW_STEP = 0
 REVIVE_SLOW_FLOOR = 0.12
 
 
@@ -336,12 +336,13 @@ class PlayerGameLogicInterface(BaseLogicInterface, ABC):
                 state["progress"] = 0.0
                 try:
                     self.socket_client.send_game_event({
-                        "type": "rescue_progress_start", "color": color
+                        "type": "rescue_progress_start", "color": color, "rescuer": local_player.color_key
                     })
                 except Exception as e:
                     print(f"[PlayerGameLogicInterface] rescue_progress_start failed: {e}")
 
-            if state["being_rescued"]:
+            # 只有身為「執行救援者」的人才負責推進進度或處理中斷，避免遠處隊友誤發停止指令
+            if state["being_rescued"] and state["rescuer"] == local_player.color_key:
                 if in_range:
                     # 繼續救援
                     state["progress"] += dt
@@ -492,6 +493,7 @@ class PlayerGameLogicInterface(BaseLogicInterface, ABC):
                 "being_rescued": False,
             }
         self._rescue_progress[color]["being_rescued"] = True
+        self._rescue_progress[color]["rescuer"] = data.get("rescuer")
         self._rescue_progress[color]["progress"] = 0.0
 
     def handle_rescue_progress_stop(self, data: dict):
