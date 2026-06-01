@@ -158,10 +158,11 @@ def nearest_empty_tile(tile_map, row, col):
     return (row, col)
 
 
-def bfs_next_step(tile_map, start_row, start_col, goal_row, goal_col):
+def bfs_next_step(tile_map, start_row, start_col, goal_row, goal_col, extra_walls=None):
     """
     使用 BFS 在格座標上找出從 start 到 goal 的最短路徑，
     回傳第一步的方向向量 (dr, dc)，若無路徑則回傳 (0, 0)。
+    :param extra_walls: 可選的集合，包含要暫時視為牆壁的 (row, col) 座標。
     """
     if (start_row, start_col) == (goal_row, goal_col):
         return 0, 0
@@ -176,7 +177,7 @@ def bfs_next_step(tile_map, start_row, start_col, goal_row, goal_col):
             nr, nc = r + dr, c + dc
             if (nr, nc) in visited:
                 continue
-            if is_wall(tile_map, nr, nc):
+            if is_wall(tile_map, nr, nc) or (extra_walls and (nr, nc) in extra_walls):
                 continue
             visited.add((nr, nc))
             new_path = path + [(dr, dc)]
@@ -1069,7 +1070,21 @@ class ReversePacman(BaseLogicInterface):
 
             pm.current_target_id = best_color
             tr, tc = pixel_to_tile(self.players[best_color].x, self.players[best_color].y)
-            dr, dc = bfs_next_step(self.tile_map, pm_row, pm_col, tr, tc)
+
+            # --- 方案三：虛擬障礙物排斥實作 ---
+            # 1. 蒐集其他隊友目前佔據與即將前往的格子
+            other_pm_tiles = set()
+            for other in self.pacmen:
+                if other.id != pm.id:
+                    other_pm_tiles.add(pixel_to_tile(other.x, other.y))
+                    other_pm_tiles.add(pixel_to_tile(other.next_tile_x, other.next_tile_y))
+
+            # 2. 優先嘗試「避開隊友」的尋路
+            dr, dc = bfs_next_step(self.tile_map, pm_row, pm_col, tr, tc, extra_walls=other_pm_tiles)
+
+            # 3. 降級機制：如果避不開（dr, dc == 0），則改用原始尋路（排隊前進）
+            if dr == 0 and dc == 0:
+                dr, dc = bfs_next_step(self.tile_map, pm_row, pm_col, tr, tc)
 
             if dr == 0 and dc == 0:
                 self._check_pacman_catches(pm)
