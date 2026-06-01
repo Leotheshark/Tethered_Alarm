@@ -278,7 +278,7 @@ async def alarm_monitor():
                 diff = (alarm_dt - now).total_seconds()
                 min_diff = min(min_diff, diff)
 
-                if -30 < diff <= 59: # TODO: 記得改回來
+                if -30 < diff <= 0:
                     print(f"[alarm] trigger room {room_id} at {room.alarm_time}")
                     room.is_triggered = True
                     await sio.emit(ServerEvent.ALARM_TRIGGERED, {"time": room.alarm_time}, room=room_id)
