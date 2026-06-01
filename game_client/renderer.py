@@ -19,6 +19,32 @@ _TILE_COLORS = {
 # 玩家顏色 → RGB 從 constants.COLORS 對照表轉換而來，確保一致性。
 _PLAYER_COLORS = COLORS
 
+# 失敗投票畫面配色：直接取自地圖磚片色盤（_TILE_COLORS），讓投票覆蓋層與遊戲世界風格一致。
+# 語意同地圖：綠=前進/好(按鈕色)、紅=停止/壞(閘門色)、深藍=牆、暖棕=地板。
+# 暖色米白：統一給中性文字（標題/倒數/提示/按鈕文字）使用，整體更暖、更一致。
+_VOTE_CREAM = (238, 230, 215)
+_VOTE_COLORS = {
+    # 背景遮罩：地板暖棕半透明。暖棕比深藍亮，故壓深底色 (90,60,40) 再給中高透明度，
+    # 像一層暖色濾鏡蓋在遊戲畫面上——夠暖、夠暗以看清按鈕與文字。
+    "overlay":     (90, 60, 40, 210),
+    "panel_edge":  (220, 170, 140),    # 點綴邊框/分隔：地板暖棕
+    "title":       _VOTE_CREAM,        # 標題「ALL DOWN!」：米白（中性文字）
+    "countdown":   _VOTE_CREAM,        # 倒數秒數：米白
+    "tip":         _VOTE_CREAM,        # 提示文字：米白
+    # CONTINUE：地圖按鈕綠 (60,180,60)；已投票後變暗版
+    "continue":      (60, 180, 60),
+    "continue_dim":  (38, 110, 40),
+    # GIVE UP：地圖閘門紅 (180,60,60)；已投票後變暗版
+    "giveup":        (180, 60, 60),
+    "giveup_dim":    (110, 40, 40),
+    "btn_border":  (220, 170, 140),    # 按鈕邊框：地板暖棕（取代原本死白）
+    "btn_text":    _VOTE_CREAM,        # 按鈕文字：米白（中性文字）
+    # 四色明細保留紅綠語意（看得出誰投了什麼），未投票為暖灰
+    "detail_continue": (140, 220, 140),
+    "detail_giveup":   (220, 130, 130),
+    "detail_waiting":  (170, 155, 140),
+}
+
 # 通關動畫時長常數 (需與 BaseLogicInterface 同步)
 CLEAR_PRE_PAUSE_TIME = 2.0  # 布條滑入前的空白停頓
 CLEAR_IN_TIME        = 0.3  # 白色布條進入時間
@@ -30,16 +56,26 @@ CLEAR_OUT_TIME       = 0.3  # 布條帶著文字滑出時間
 class Renderer:
     def __init__(self, screen):
         self.screen = screen
-        self.font = pygame.font.SysFont(None, 24)
-        self.font_large = pygame.font.SysFont(None, 52)
-        self.font_clear = pygame.font.SysFont(None, 300, bold=True)
-        self.font_warning = pygame.font.SysFont(None, 120, bold=True) # 放大字體
+        base_path = os.path.dirname(os.path.abspath(__file__))
+
+        # 內文與一般 UI 文字用 VT323（復古 CRT/終端機感）；大標題另用 Pixelify Sans
+        # （較有份量的像素字），兩者分工讓標題更醒目、內文更耐讀。
+        # VT323 等寬偏細，同 px 渲染比預設 SysFont 略小，故各級尺寸略放大以維持原本份量。
+        # 找不到字體檔時 fallback 回 pygame 內建字型，確保未帶字體檔的環境也能正常顯示。
+        font_path = os.path.join(base_path, "assets", "fonts", "VT323-Regular.ttf")
+        title_path = os.path.join(base_path, "assets", "fonts", "PixelifySans-VariableFont_wght.ttf")
+        self.font = self._load_font(font_path, 28)        # 一般文字（明細/提示）
+        self.font_large = self._load_font(font_path, 58)  # 倒數等 UI 文字
+        self.font_button = self._load_font(font_path, 48) # 投票按鈕文字（較小，避免長字貼邊框）
+        # 大標題（START! / CLEAR! / ALL DOWN!）統一用 Pixelify Sans
+        self.font_title = self._load_font(title_path, 60)              # ALL DOWN! 等中型標題
+        self.font_clear = self._load_font(title_path, 300, fallback_bold=True)  # START! / CLEAR! 動畫大字
+
         # 失敗投票按鈕的點擊區域（由 _draw_defeat_vote 每幀更新；engine 讀此做滑鼠命中測試）
         self.vote_continue_rect = None
         self.vote_giveup_rect = None
 
         # 載入牆壁圖片：使用 assets/image/wall.png (原始尺寸已符合 60x60px)
-        base_path = os.path.dirname(os.path.abspath(__file__))
         wall_path = os.path.join(base_path, "assets", "image", "wall.png")
         try:
             self.wall_img = pygame.image.load(wall_path).convert_alpha()
@@ -74,6 +110,16 @@ class Renderer:
         except Exception as e:
             print(f"[Renderer] Failed to load fog image at {fog_path}: {e}")
             self.fog_img = None
+
+    def _load_font(self, path, size, fallback_bold=False):
+        """載入指定 .ttf 字體；失敗時 fallback 回 pygame 內建字型，確保缺檔也能運作。
+        fallback_bold：fallback 時是否用粗體（給通關大字維持份量）。"""
+        try:
+            font = pygame.font.Font(path, size)
+            return font
+        except Exception as e:
+            print(f"[Renderer] Failed to load font {path} (size {size}): {e}; using default")
+            return pygame.font.SysFont(None, size, bold=fallback_bold)
 
     def clear(self):
         """用背景色清空畫面"""
@@ -478,20 +524,20 @@ class Renderer:
             return
 
         sw, sh = self.screen.get_size()
-        # 半透明黑底覆蓋全畫面
+        # 半透明遮罩覆蓋全畫面：用地圖牆的深藍（取代純黑），讓投票層與遊戲世界融為一體
         overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 200))
+        overlay.fill(_VOTE_COLORS["overlay"])
         self.screen.blit(overlay, (0, 0))
 
         cx = sw // 2
 
-        # 標題
-        title = self.font_large.render("ALL DOWN!", True, (255, 80, 80))
+        # 標題（Pixelify Sans 大標題字）
+        title = self.font_title.render("ALL DOWN!", True, _VOTE_COLORS["title"])
         self.screen.blit(title, (cx - title.get_width() // 2, sh // 2 - 180))
 
-        # 倒數
+        # 倒數（暖米白）
         secs = int(vote.get("time_left", 0)) + 1  # 向上取整，顯示較直覺
-        countdown = self.font_large.render(f"{secs}s", True, (230, 230, 230))
+        countdown = self.font_large.render(f"{secs}s", True, _VOTE_COLORS["countdown"])
         self.screen.blit(countdown, (cx - countdown.get_width() // 2, sh // 2 - 120))
 
         # 統計票數
@@ -501,39 +547,43 @@ class Renderer:
         continue_count = sum(1 for v in votes.values() if v)
         giveup_count = sum(1 for v in votes.values() if not v)
 
-        # 兩個並排按鈕（可點）：CONTINUE(綠) / GIVE UP(紅)，按鈕上標票數
+        # 兩個並排按鈕（可點）：CONTINUE(地圖按鈕綠) / GIVE UP(地圖閘門紅)，按鈕上標票數
         btn_w, btn_h, gap = 300, 90, 60
         by = sh // 2 - 40
         self.vote_continue_rect = pygame.Rect(cx - btn_w - gap // 2, by, btn_w, btn_h)
         self.vote_giveup_rect = pygame.Rect(cx + gap // 2, by, btn_w, btn_h)
         # 本機已投票後按鈕變暗，提示已不可再點
-        cont_bg = (40, 110, 40) if local_voted else (60, 170, 60)
-        give_bg = (110, 40, 40) if local_voted else (170, 60, 60)
+        cont_bg = _VOTE_COLORS["continue_dim"] if local_voted else _VOTE_COLORS["continue"]
+        give_bg = _VOTE_COLORS["giveup_dim"] if local_voted else _VOTE_COLORS["giveup"]
         self._draw_vote_button(self.vote_continue_rect, "CONTINUE", continue_count, cont_bg)
         self._draw_vote_button(self.vote_giveup_rect, "GIVE UP", giveup_count, give_bg)
 
         # 提示文字（滑鼠點擊）
         tip_txt = "Voted - waiting for others..." if local_voted else "Click to vote"
-        tip = self.font.render(tip_txt, True, (210, 210, 210))
+        tip = self.font.render(tip_txt, True, _VOTE_COLORS["tip"])
         self.screen.blit(tip, (cx - tip.get_width() // 2, by + btn_h + 16))
 
-        # 四色投票明細：CONTINUE(綠) / GIVE UP(紅) / 未投(灰)
+        # 四色投票明細：CONTINUE(綠) / GIVE UP(紅) / 未投(暖灰)
         y = by + btn_h + 56
         for color in ("blue", "green", "pink", "red"):
             if color in votes:
-                label, c = ("CONTINUE", (120, 230, 120)) if votes[color] else ("GIVE UP", (230, 120, 120))
+                if votes[color]:
+                    label, c = "CONTINUE", _VOTE_COLORS["detail_continue"]
+                else:
+                    label, c = "GIVE UP", _VOTE_COLORS["detail_giveup"]
             else:
-                label, c = ("waiting...", (160, 160, 160))
+                label, c = "waiting...", _VOTE_COLORS["detail_waiting"]
             me = " (you)" if color == local_color else ""
             line = self.font.render(f"{color.upper()}{me}: {label}", True, c)
             self.screen.blit(line, (cx - line.get_width() // 2, y))
             y += 28
 
     def _draw_vote_button(self, rect, label, count, bg_color):
-        """繪製單一投票按鈕：底色矩形 + 邊框 + 「LABEL (count)」文字置中。"""
+        """繪製單一投票按鈕：底色矩形 + 暖棕邊框 + 「LABEL (count)」暖白文字置中。
+        邊框/文字色取自地圖地板暖棕色系，與遊戲世界風格一致。"""
         pygame.draw.rect(self.screen, bg_color, rect, border_radius=8)
-        pygame.draw.rect(self.screen, (235, 235, 235), rect, width=2, border_radius=8)
-        text = self.font_large.render(f"{label}  ({count})", True, (255, 255, 255))
+        pygame.draw.rect(self.screen, _VOTE_COLORS["btn_border"], rect, width=3, border_radius=8)
+        text = self.font_button.render(f"{label}  ({count})", True, _VOTE_COLORS["btn_text"])
         self.screen.blit(text, (rect.centerx - text.get_width() // 2,
                                 rect.centery - text.get_height() // 2))
 
