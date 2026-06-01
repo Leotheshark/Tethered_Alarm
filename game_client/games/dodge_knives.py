@@ -22,27 +22,28 @@ P = 2   # Pellet（飼料/得分點）
 G = 3   # Gate（閘門，初始關閉）
 B = 4   # Button（按鈕，踩下開啟對應閘門）
 S = 5   # Spike（釘板，踩上後速度減半 3 秒）
-
+F = 6   # Fog（迷霧陷阱，踩到後本地視野縮小數秒）
 # ─── 地圖定義（17 * 32） ────────────────────────────────
 MAP_LAYOUT = [
-#    0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+  #  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
     [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],  # 0
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 1
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 2
-    [W, E, W, E, W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 3
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 4
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 5
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 6
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 7
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 8
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 9
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 10
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 11
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 12
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 13
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 14
-    [W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W],  # 15
-    [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],  # 16
+    [W, E, E, E, W, B, W, W, W, W, W, W, E, E, E, W, E, E, E, E, E, E, E, E, W, E, E, F, E, E, E, W],  # 1
+    [W, E, E, E, W, E, W, W, W, W, W, W, E, W, E, W, E, W, E, E, E, E, E, E, W, E, E, F, E, E, E, W],  # 2
+    [W, E, E, E, W, E, F, E, E, E, E, F, E, W, E, E, E, W, E, W, W, W, E, E, W, E, E, F, E, E, E, W],  # 3
+    [W, G, G, G, W, G, W, W, W, W, W, W, W, W, W, W, W, W, E, W, E, G, E, E, W, E, E, F, F, F, F, W],  # 4
+    [W, E, E, E, W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W, F, W, E, E, E, E, E, E, E, E, E, W],  # 5
+    [W, E, E, E, W, E, E, E, E, E, W, F, W, W, W, W, W, W, W, W, E, W, E, E, E, E, E, E, E, E, E, W],  # 6
+    [W, E, E, E, F, E, E, E, E, E, W, E, W, W, W, W, W, W, W, W, E, W, W, W, W, W, W, W, W, W, E, W],  # 7
+    [W, E, W, W, W, W, W, W, W, W, W, E, W, W, W, E, E, E, B, E, G, E, E, E, E, E, E, E, E, E, E, W],  # 8
+    [W, E, E, E, E, E, E, E, E, E, E, G, E, B, E, E, E, W, W, W, E, W, W, W, W, W, W, W, W, W, E, W],  # 9
+    [W, E, W, W, W, W, W, W, W, W, W, E, W, W, W, W, W, W, W, W, E, W, E, E, E, E, E, F, E, E, E, W],  # 10
+    [W, E, E, E, E, E, E, E, E, E, W, E, W, W, W, W, W, W, W, W, F, W, E, E, E, E, E, W, E, E, E, W],  # 11
+    [W, E, E, E, E, E, E, E, E, E, W, F, W, E, E, E, E, E, E, E, E, E, E, E, E, E, E, W, E, E, E, W],  # 12
+    [W, F, F, F, F, E, E, W, E, E, G, E, W, E, W, W, W, W, W, W, W, W, W, W, W, W, G, W, G, G, G, W],  # 13
+    [W, E, E, E, F, E, E, W, E, E, W, W, W, E, W, E, E, E, W, E, F, E, E, E, E, F, E, W, E, E, E, W],  # 14
+    [W, E, E, E, F, E, E, W, E, E, E, E, E, E, W, E, W, E, W, E, W, W, W, W, W, W, E, W, E, E, E, W],  # 15
+    [W, E, E, E, F, E, E, W, E, E, E, E, E, E, E, E, W, E, E, E, W, W, W, W, W, W, B, W, E, E, E, W],  # 16
+    [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],  # 17
 #    0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
 ]
 
@@ -53,18 +54,18 @@ AVATAR_SIZE = 24
 BUTTON_HOLD_TIME = 2.5  # 玩家需要踩在按鈕上的總秒數
 
 SPAWN_TILES = {
-    "blue":  (3, 3),
-    "green": (13, 28),
-    "pink":  (3, 28),
-    "red":   (13, 3),
+    "blue":  (8, 15),
+    "green": (9, 15),
+    "pink":  (8, 16),
+    "red":   (9, 16),
 }
 
 # 按鈕位置與顏色配置
 BUTTON_CONFIGS = [
-    {"pos": (3, 3), "color": "blue"},
-    {"pos": (13, 28), "color": "green"},
-    {"pos": (3, 28), "color": "pink"},
-    {"pos": (13, 3), "color": "red"},
+    {"pos": (2, 2), "color": "red"},
+    {"pos": (15, 29), "color": "blue"},
+    {"pos": (2, 29), "color": "green"},
+    {"pos": (15, 2), "color": "pink"},
 ]
 
 # ─── 遊戲數值常數 ─────────────────────────────────────────────────────────────
@@ -223,7 +224,7 @@ class DodgeKnives(BaseLogicInterface):
                         })
             else:
                 # 沒人踩時進度條緩慢後退
-                btn.charge_timer = max(0.0, btn.charge_timer - dt * 2)
+                btn.charge_timer = max(0.0, btn.charge_timer - dt * 0.25)
 
         # 檢查是否所有按鈕都點亮 (僅在非動畫期間觸發)
         if self.clear_anim_stage == 0:
