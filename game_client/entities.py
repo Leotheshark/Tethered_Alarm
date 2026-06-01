@@ -2,9 +2,11 @@
 import pygame
 import math
 
+from games.player_game_base import REVIVE_SLOW_FLOOR, REVIVE_SLOW_STEP
 from sync_helpers import RemoteSyncState, apply_server_update, tick_remote_sync
 
 PLAYER_SPEED = 200  # Ghost 預設移動速度（像素/秒），小遊戲可 import 此常數共用
+AVATAR_SIZE = 24    # Ghost 預設 avatar 大小（半徑）
 
 class Entity:
     """
@@ -44,24 +46,56 @@ class Ghost(Entity):
     2. 動畫狀態機：根據移動速度或輸入，決定現在該換成哪一個 visual_key。
     3. 同步機制：預留接收伺服器資料的介面，實作 Week 3 的 LERP 插值平滑移動。
     """
-    def __init__(self, color_key="blue", avatar_size=24):
-        self.direction = "right" # 當前朝向：left, right
-        super().__init__(960, 540, visual_key=f"{color_key}_{self.direction}")
+    def __init__(self, color_key="blue", avatar_size=AVATAR_SIZE, x=None, y=None):
+        self.direction = "right"  # 當前朝向：left, right
+        start_x = 960.0 if x is None else float(x)
+        start_y = 540.0 if y is None else float(y)
+        super().__init__(start_x, start_y, visual_key=f"{color_key}_{self.direction}")
         
         self.color_key = color_key  # 保存顏色鍵以供 visual_key 更新與 fallback 繪製使用
-        self.avatar_size = avatar_size # 統一使用實體的半徑屬性
+        self.avatar_size = avatar_size  # 統一使用實體的半徑屬性
         self.width = avatar_size * 2    # 碰撞箱寬度 (直徑)
         self.height = avatar_size * 2   # 碰撞箱高度 (直徑)
+        self._base_speed = PLAYER_SPEED
         self.speed = PLAYER_SPEED
+        self.sync = RemoteSyncState(target_x=start_x, target_y=start_y)
         self.is_alive = True            # 存活狀態
         
+        self.rescue_count = 0       # 已被救援次數（可支援救援減速/增益機制）
+        self.spike_timer = 0.0      # 踩到釘板後的緩速倒數
+        self.fog_timer = 0.0        # 踩到迷霧後的致盲倒數
+        self.rescue_progress = 0.0  # 隊友救援進度
+        self.charge = 0.0           # 角色的通用進度值，可被遊戲機制使用
+        self.being_rescued = False  # 是否正在被救援
+
         self.current_dx = 0  # 上一幀的原始輸入方向，供網路廣播使用
         self.current_dy = 0
 
         # 1x2 動畫屬性
         self.frame_index = 0
         self.animation_timer = 0.0
-        self.animation_speed = 0.15  # 每 0.15 秒切換一次影格
+        self.animation_speed = 0.3  # 每 0.3 秒切換一次影格
+
+    @property
+    def speed(self):
+        """回傳當前移動速度，並支援復活/釘板/迷霧等狀態修正。"""
+        base = getattr(self, "_base_speed", PLAYER_SPEED)
+        if not getattr(self, "is_alive", True):
+            return 0.0
+
+        # 永久或暫時速度調整（若機制未使用，則保持原速）
+        if getattr(self, "rescue_count", 0) > 0:
+            revive_factor = max(REVIVE_SLOW_FLOOR, 1.0 - self.rescue_count * REVIVE_SLOW_STEP)
+            base *= revive_factor
+        if getattr(self, "spike_timer", 0.0) > 0:
+            base *= 0.5
+        if getattr(self, "fog_timer", 0.0) > 0:
+            base *= 0.7
+        return base
+
+    @speed.setter
+    def speed(self, value):
+        self._base_speed = value
 
     def move(self, dx, dy, dt, tile_size=32, is_wall_cb=None, others=None):
         """

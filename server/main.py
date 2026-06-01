@@ -334,8 +334,11 @@ async def start_game(sid, data):
     room_id = data.get("room_id")
     room = state.rooms.get(room_id)
     if room:
-        # 隨機或固定選擇小遊戲；目前固定為 reverse_pacman
-        minigame = "reverse_pacman"
+        # 輪流選擇小遊戲：在 reverse_pacman 與 dodge_knives 之間交替
+        available_games = ["dodge_knives", "reverse_pacman"]
+        minigame = available_games[room.played_games_count % len(available_games)]
+        room.played_games_count += 1
+
         # 只記錄要玩的小遊戲，並重置派發旗標；此時 game_client 進程尚未啟動，
         # 真正的 START_MINIGAME（含權威玩家名單）延後到 4 個 game_client 都訂閱後
         # 由 _maybe_dispatch_minigame 統一派發一次，確保各 client 拿到一致的名單。

@@ -63,10 +63,11 @@ def main():
         env["DEBUG_PLAYERS"] = str(n)  # 湊滿 n 人才啟動小遊戲
         env["ROOM_ID"] = args.room
         env["PLAYER_COLOR"] = colors[i]
+        env["MUTE_AUDIO"] = "1" if i > 0 else "0"
         env["SERVER_URL"] = "http://127.0.0.1:5000"
         print(f"[debug] 啟動 client {i + 1} 於 {positions[i]}")
         procs.append(subprocess.Popen([sys.executable, game_client], env=env))
-        time.sleep(0.2)  # 錯開連線，避免顏色指派競爭
+        time.sleep(0.5)  # 錯開連線，避免顏色指派競爭
 
     print("[debug] 全部啟動完成。按 Ctrl+C 關閉所有視窗。")
     try:
@@ -75,7 +76,7 @@ def main():
             for p in procs:
                 if p.poll() is not None:
                     raise KeyboardInterrupt
-            time.sleep(0.5)
+            time.sleep(0.2)
     except KeyboardInterrupt:
         print("\n[debug] 關閉所有子行程...")
         for p in procs:
