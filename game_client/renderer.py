@@ -63,13 +63,14 @@ class Renderer:
         # VT323 等寬偏細，同 px 渲染比預設 SysFont 略小，故各級尺寸略放大以維持原本份量。
         # 找不到字體檔時 fallback 回 pygame 內建字型，確保未帶字體檔的環境也能正常顯示。
         font_path = os.path.join(base_path, "assets", "fonts", "VT323-Regular.ttf")
-        title_path = os.path.join(base_path, "assets", "fonts", "PixelifySans-VariableFont_wght.ttf")
+        title_path = os.path.join(base_path, "assets", "fonts", "Letter Magic.ttf")
         self.font = self._load_font(font_path, 28)        # 一般文字（明細/提示）
         self.font_large = self._load_font(font_path, 58)  # 倒數等 UI 文字
         self.font_button = self._load_font(font_path, 48) # 投票按鈕文字（較小，避免長字貼邊框）
         # 大標題（START! / CLEAR! / ALL DOWN!）統一用 Pixelify Sans
-        self.font_title = self._load_font(title_path, 60)              # ALL DOWN! 等中型標題
-        self.font_clear = self._load_font(title_path, 300, fallback_bold=True)  # START! / CLEAR! 動畫大字
+        self.font_title = self._load_font(title_path, 72)              # ALL DOWN! 等中型標題
+        self.font_warning = self._load_font(title_path, 120) # 飛刀預警倒數
+        self.font_clear = self._load_font(title_path, 240, fallback_bold=True)  # START! / CLEAR! 動畫大字
 
         # 失敗投票按鈕的點擊區域（由 _draw_defeat_vote 每幀更新；engine 讀此做滑鼠命中測試）
         self.vote_continue_rect = None
@@ -110,6 +111,23 @@ class Renderer:
         except Exception as e:
             print(f"[Renderer] Failed to load fog image at {fog_path}: {e}")
             self.fog_img = None
+
+        # 載入按鈕圖片
+        untriggerd_path = os.path.join(base_path, "assets", "image", "button_untriggerd.png")
+        try:
+            self.btn_untriggerd_img = pygame.image.load(untriggerd_path).convert_alpha()
+            print(f"[Renderer] Successfully loaded untriggered button texture: {untriggerd_path}")
+        except Exception as e:
+            print(f"[Renderer] Failed to load untriggered button image at {untriggerd_path}: {e}")
+            self.btn_untriggerd_img = None
+
+        triggerd_path = os.path.join(base_path, "assets", "image", "button_triggerd.png")
+        try:
+            self.btn_triggerd_img = pygame.image.load(triggerd_path).convert_alpha()
+            print(f"[Renderer] Successfully loaded triggered button texture: {triggerd_path}")
+        except Exception as e:
+            print(f"[Renderer] Failed to load triggered button image at {triggerd_path}: {e}")
+            self.btn_triggerd_img = None
 
     def _load_font(self, path, size, fallback_bold=False):
         """載入指定 .ttf 字體；失敗時 fallback 回 pygame 內建字型，確保缺檔也能運作。
@@ -256,19 +274,25 @@ class Renderer:
                     self.screen.blit(self.ground_img, (tx, ty))
                 elif tile == 3 and self.gate_img:
                     self.screen.blit(self.gate_img, (tx, ty))
+                elif tile == 4:
+                    # 根據是否有按鈕被踩下切換圖片
+                    btn_img = self.btn_triggerd_img if render_data.get("any_gate_pressed") else self.btn_untriggerd_img
+                    if btn_img:
+                        self.screen.blit(btn_img, (tx, ty))
+                    else:
+                        # 圖片載入失敗時的備援繪圖
+                        color = tile_colors.get(tile, _TILE_COLORS[2])
+                        pygame.draw.rect(self.screen, color, (tx, ty, tile_size, tile_size))
+                        inner = 10
+                        pygame.draw.rect(
+                            self.screen, (120, 255, 120),
+                            (tx + inner, ty + inner, tile_size - inner * 2, tile_size - inner * 2)
+                        )
                 elif tile == 6 and self.fog_img:
                     self.screen.blit(self.fog_img, (tx, ty))
                 else:
                     color = tile_colors.get(tile, _TILE_COLORS[2])
                     pygame.draw.rect(self.screen, color, (tx, ty, tile_size, tile_size))
-
-                # 磚片細節：按鈕畫亮綠正方形，迷霧陷阱畫霧點提示
-                if tile == 4:  # B 按鈕：中央畫小方塊提示
-                    inner = 10
-                    pygame.draw.rect(
-                        self.screen, (120, 255, 120),
-                        (tx + inner, ty + inner, tile_size - inner * 2, tile_size - inner * 2)
-                    )
 
         # 1.5. 繪製互動按鈕 (原生 Pygame 繪圖實作發光)
         for btn in buttons:
@@ -533,7 +557,7 @@ class Renderer:
 
         # 標題（Pixelify Sans 大標題字）
         title = self.font_title.render("ALL DOWN!", True, _VOTE_COLORS["title"])
-        self.screen.blit(title, (cx - title.get_width() // 2, sh // 2 - 180))
+        self.screen.blit(title, (cx - title.get_width() // 2, sh // 2 - 250))
 
         # 倒數（暖米白）
         secs = int(vote.get("time_left", 0)) + 1  # 向上取整，顯示較直覺
@@ -561,10 +585,10 @@ class Renderer:
         # 提示文字（滑鼠點擊）
         tip_txt = "Voted - waiting for others..." if local_voted else "Click to vote"
         tip = self.font.render(tip_txt, True, _VOTE_COLORS["tip"])
-        self.screen.blit(tip, (cx - tip.get_width() // 2, by + btn_h + 16))
+        self.screen.blit(tip, (cx - tip.get_width() // 2, by + btn_h + 25))
 
         # 四色投票明細：CONTINUE(綠) / GIVE UP(紅) / 未投(暖灰)
-        y = by + btn_h + 56
+        y = by + btn_h + 70
         for color in ("blue", "green", "pink", "red"):
             if color in votes:
                 if votes[color]:

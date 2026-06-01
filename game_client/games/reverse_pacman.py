@@ -101,6 +101,8 @@ PACMAN_SPEED_CAP            = 250   # 基礎速度上限
 PACMAN_DUPLICATE_INTERVAL   = 5000  # 每幾秒複製出一隻新 Pac-Man
 PACMAN_MAX_COUNT            = 4     # Pac-Man 數量上限
 
+RESTART_DELAY = 3
+
 
 def bfs_next_step(tile_map, start_row, start_col, goal_row, goal_col, extra_walls=None):
     """
@@ -573,6 +575,7 @@ class ReversePacman(PlayerGameLogicInterface):
             "tile_map":    self.tile_map,
             "tile_size":   TILE_SIZE,
             "open_gates":  list(self.open_gates),
+            "any_gate_pressed": bool(self.open_gates),
             "buttons":     stations,   # 蓄能站（重用 renderer 的按鈕充能繪圖）
             "fog_active":  bool(local and local.fog_timer > 0 and self.clear_anim_stage == 0),
             "fog_radius":  FOG_VISION_RADIUS,

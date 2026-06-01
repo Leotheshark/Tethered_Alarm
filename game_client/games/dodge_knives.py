@@ -60,6 +60,7 @@ DEFEAT_VOTE_TIME = 30.0
 WARNING_DURATION = 10.0
 RESCUE_RADIUS = 70
 RESCUE_HOLD_TIME = 2.0
+RESTART_DELAY = 3
 
 SPAWN_TILES = {
     "blue":  (8, 15),
@@ -69,18 +70,18 @@ SPAWN_TILES = {
 }
 
 # 按鈕位置與顏色配置
-BUTTON_CONFIGS = [
-    {"pos": (9, 16), "color": "red"},
-    {"pos": (8, 15), "color": "blue"},
-    {"pos": (9, 15), "color": "green"},
-    {"pos": (8, 16), "color": "pink"},
-]
 # BUTTON_CONFIGS = [
-#     {"pos": (2, 2), "color": "red"},
-#     {"pos": (15, 29), "color": "blue"},
-#     {"pos": (2, 29), "color": "green"},
-#     {"pos": (15, 2), "color": "pink"},
+#     {"pos": (9, 16), "color": "red"},
+#     {"pos": (8, 15), "color": "blue"},
+#     {"pos": (9, 15), "color": "green"},
+#     {"pos": (8, 16), "color": "pink"},
 # ]
+BUTTON_CONFIGS = [
+    {"pos": (2, 2), "color": "red"},
+    {"pos": (15, 29), "color": "blue"},
+    {"pos": (2, 29), "color": "green"},
+    {"pos": (15, 2), "color": "pink"},
+]
 
 # ─── 遊戲數值常數 ─────────────────────────────────────────────────────────────
 
@@ -447,14 +448,14 @@ class DodgeKnives(BaseLogicInterface):
 
         # 結算
         if any(self._votes.values()):
-            print("[DodgeKnives] defeat vote -> CONTINUE")
+            print("[DodgeKnives] defeat vote -> CONTINUE (someone voted to continue)")
             try:
                 self.socket_client.send_game_event({"type": "vote_result", "value": "continue"})
             except Exception as e:
                 print(f"[DodgeKnives] vote_result(continue) broadcast failed: {e}")
             self.on_enter()
         else:
-            print("[DodgeKnives] defeat vote -> ABORT")
+            print("[DodgeKnives] defeat vote -> ABORT (all gave up / timed out = give up)")
             self._failed = True
             self._voting = False
             try:
@@ -464,8 +465,16 @@ class DodgeKnives(BaseLogicInterface):
                 print(f"[DodgeKnives] vote_result(abort)/surrender failed: {e}")
 
     def _apply_vote(self, color, value):
+        """記錄某顏色玩家的投票（以 color 為鍵天然去重，重投以最後一次為準）。
+
+        有人投「繼續」(value=True) 時，把投票剩餘時間壓到最多 5 秒：
+        若投票當下剩餘 > 5 秒則縮成 5 秒，剩餘 <= 5 秒則維持不動（只縮不延）。
+        """
         if color in self.players:
             self._votes[color] = bool(value)
+            if value:
+                # 將計時器往前推，確保剩餘時間不超過 RESTART_DELAY
+                self._vote_timer = max(self._vote_timer, DEFEAT_VOTE_TIME - RESTART_DELAY)
 
     def _check_knife_collisions(self):
         """處理飛刀與閘門、玩家的碰撞"""
@@ -671,6 +680,7 @@ class DodgeKnives(BaseLogicInterface):
         return {
             "tile_map": self.tile_map,
             "tile_size": TILE_SIZE,
+            "any_gate_pressed": bool(self.open_gates),
             "clear_anim": self._get_clear_anim_data(),
             "warning": {
                 "active": self._warning_active,
