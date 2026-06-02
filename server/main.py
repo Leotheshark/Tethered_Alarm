@@ -339,7 +339,7 @@ async def start_game(sid, data):
     room = state.rooms.get(room_id)
     if room:
         # 輪流選擇小遊戲：在 reverse_pacman 與 dodge_knives 之間交替
-        available_games = ["dodge_knives", "reverse_pacman"]
+        available_games = ["reverse_pacman", "dodge_knives"]
         minigame = available_games[room.played_games_count % len(available_games)]
         room.played_games_count += 1
 

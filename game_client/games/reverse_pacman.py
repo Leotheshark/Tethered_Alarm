@@ -1082,7 +1082,7 @@ class ReversePacman(PlayerGameLogicInterface):
         player.visual_key = "dead"
         self.sound_manager.play("eat")
         player.rescue_progress = 0.0
-        print(f"[ReversePacman] {player.color_key} caught! rescue_count={player.先不要生成程式碼_count}")
+        print(f"[ReversePacman] {player.color_key} caught! rescue_count={player.rescue_count}")
 
         try:
             self.socket_client.send_game_event({

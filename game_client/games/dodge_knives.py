@@ -70,18 +70,18 @@ SPAWN_TILES = {
 }
 
 # 按鈕位置與顏色配置
-BUTTON_CONFIGS = [
-    {"pos": (9, 16), "color": "red"},
-    {"pos": (8, 15), "color": "blue"},
-    {"pos": (9, 15), "color": "green"},
-    {"pos": (8, 16), "color": "pink"},
-]
 # BUTTON_CONFIGS = [
-#     {"pos": (2, 2), "color": "red"},
-#     {"pos": (15, 29), "color": "blue"},
-#     {"pos": (2, 29), "color": "green"},
-#     {"pos": (15, 2), "color": "pink"},
+#     {"pos": (9, 16), "color": "red"},
+#     {"pos": (8, 15), "color": "blue"},
+#     {"pos": (9, 15), "color": "green"},
+#     {"pos": (8, 16), "color": "pink"},
 # ]
+BUTTON_CONFIGS = [
+    {"pos": (2, 2), "color": "red"},
+    {"pos": (15, 29), "color": "blue"},
+    {"pos": (2, 29), "color": "green"},
+    {"pos": (15, 2), "color": "pink"},
+]
 
 # ─── 遊戲數值常數 ─────────────────────────────────────────────────────────────
 
