@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 
 # 預設參數：個別呼叫端可在 tick_remote_sync 覆寫
-DEFAULT_LERP_SPEED = 30   # 越大越貼近最新封包；越小越平滑但延遲感越重
+DEFAULT_LERP_SPEED = 24   # 降低係數以獲得更平滑的追蹤效果，減少網路抖動造成的跳動感
 DEFAULT_DR_TIMEOUT = 0.15 # 超過此秒數未收到封包則啟動 Dead Reckoning
 
 

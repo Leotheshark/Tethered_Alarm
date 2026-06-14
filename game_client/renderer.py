@@ -1,14 +1,15 @@
 # --- 渲染模組 ---
 import pygame
 import math
+import os
 from visual_registry import VisualRegistry
 from constants import COLORS
 
 # 磚片類型 → 顏色對照
 _TILE_COLORS = {
     0: (0, 0, 100),       # W 牆壁：深藍色
-    1: (255, 230, 210),   # E 空地：背景色
-    2: (255, 230, 210),   # P（已廢棄，地圖載入時轉為空地；保留色避免舊地圖殘留索引出錯）
+    1: (220, 170, 140),   # E 空地：背景色
+    2: (220, 170, 140),   # P（已廢棄，地圖載入時轉為空地；保留色避免舊地圖殘留索引出錯）
     3: (180, 60, 60),     # G 閘門（關閉）：紅色
     4: (60, 180, 60),     # B 按鈕：綠色
     5: (180, 100, 40),    # S 釘板：橘棕色
@@ -18,23 +19,126 @@ _TILE_COLORS = {
 # 玩家顏色 → RGB 從 constants.COLORS 對照表轉換而來，確保一致性。
 _PLAYER_COLORS = COLORS
 
+# 失敗投票畫面配色：直接取自地圖磚片色盤（_TILE_COLORS），讓投票覆蓋層與遊戲世界風格一致。
+# 語意同地圖：綠=前進/好(按鈕色)、紅=停止/壞(閘門色)、深藍=牆、暖棕=地板。
+# 暖色米白：統一給中性文字（標題/倒數/提示/按鈕文字）使用，整體更暖、更一致。
+_VOTE_CREAM = (238, 230, 215)
+_VOTE_COLORS = {
+    # 背景遮罩：地板暖棕半透明。暖棕比深藍亮，故壓深底色 (90,60,40) 再給中高透明度，
+    # 像一層暖色濾鏡蓋在遊戲畫面上——夠暖、夠暗以看清按鈕與文字。
+    "overlay":     (90, 60, 40, 210),
+    "panel_edge":  (220, 170, 140),    # 點綴邊框/分隔：地板暖棕
+    "title":       _VOTE_CREAM,        # 標題「ALL DOWN!」：米白（中性文字）
+    "countdown":   _VOTE_CREAM,        # 倒數秒數：米白
+    "tip":         _VOTE_CREAM,        # 提示文字：米白
+    # CONTINUE：地圖按鈕綠 (60,180,60)；已投票後變暗版
+    "continue":      (60, 180, 60),
+    "continue_dim":  (38, 110, 40),
+    # GIVE UP：地圖閘門紅 (180,60,60)；已投票後變暗版
+    "giveup":        (180, 60, 60),
+    "giveup_dim":    (110, 40, 40),
+    "btn_border":  (220, 170, 140),    # 按鈕邊框：地板暖棕（取代原本死白）
+    "btn_text":    _VOTE_CREAM,        # 按鈕文字：米白（中性文字）
+    # 四色明細保留紅綠語意（看得出誰投了什麼），未投票為暖灰
+    "detail_continue": (140, 220, 140),
+    "detail_giveup":   (220, 130, 130),
+    "detail_waiting":  (170, 155, 140),
+}
+
 # 通關動畫時長常數 (需與 BaseLogicInterface 同步)
-CLEAR_PRE_PAUSE_TIME = 1.0  # 布條滑入前的空白停頓
-CLEAR_IN_TIME        = 0.3  # 白色布條滑入時間
+CLEAR_PRE_PAUSE_TIME = 2.0  # 布條滑入前的空白停頓
+CLEAR_IN_TIME        = 0.3  # 白色布條進入時間
 CLEAR_TEXT_PAUSE_TIME = 0.4  # 文字進場前的停頓時間
-CLEAR_TEXT_TIME      = 1.5  # 文字停留總時間 (含停頓、進場動畫與持續時間)
+CLEAR_TEXT_TIME      = 1.8  # 文字停留總時間 (含停頓、進場、持續與淡出)
+CLEAR_TEXT_FADE_OUT_TIME = 0.3 # 文字淡出時間
 CLEAR_TEXT_ANIM_TIME = 0.3  # 文字縮放與透明度漸變的持續時間
 CLEAR_OUT_TIME       = 0.3  # 布條帶著文字滑出時間
 
 class Renderer:
     def __init__(self, screen):
         self.screen = screen
-        self.font = pygame.font.SysFont(None, 24)
-        self.font_large = pygame.font.SysFont(None, 52)
-        self.font_clear = pygame.font.SysFont(None, 300, bold=True)
+        base_path = os.path.dirname(os.path.abspath(__file__))
+
+        # 內文與一般 UI 文字用 VT323（復古 CRT/終端機感）；大標題另用 Pixelify Sans
+        # （較有份量的像素字），兩者分工讓標題更醒目、內文更耐讀。
+        # VT323 等寬偏細，同 px 渲染比預設 SysFont 略小，故各級尺寸略放大以維持原本份量。
+        # 找不到字體檔時 fallback 回 pygame 內建字型，確保未帶字體檔的環境也能正常顯示。
+        font_path = os.path.join(base_path, "assets", "fonts", "VT323-Regular.ttf")
+        title_path = os.path.join(base_path, "assets", "fonts", "Letter Magic.ttf")
+        self.font = self._load_font(font_path, 28)        # 一般文字（明細/提示）
+        self.font_large = self._load_font(font_path, 58)  # 倒數等 UI 文字
+        self.font_button = self._load_font(font_path, 48) # 投票按鈕文字（較小，避免長字貼邊框）
+        # 大標題（START! / CLEAR! / ALL DOWN!）統一用 Pixelify Sans
+        self.font_title = self._load_font(title_path, 72)              # ALL DOWN! 等中型標題
+        self.font_warning = self._load_font(title_path, 120) # 飛刀預警倒數
+        self.font_clear = self._load_font(title_path, 180, fallback_bold=True)  # START! / CLEAR! 動畫大字
+
         # 失敗投票按鈕的點擊區域（由 _draw_defeat_vote 每幀更新；engine 讀此做滑鼠命中測試）
         self.vote_continue_rect = None
         self.vote_giveup_rect = None
+
+        # 載入牆壁圖片：使用 assets/image/wall.png (原始尺寸已符合 60x60px)
+        wall_path = os.path.join(base_path, "assets", "image", "wall.png")
+        try:
+            self.wall_img = pygame.image.load(wall_path).convert_alpha()
+            print(f"[Renderer] Successfully loaded wall texture: {wall_path}")
+        except Exception as e:
+            print(f"[Renderer] Failed to load wall image at {wall_path}: {e}")
+            self.wall_img = None
+
+        # 載入地板圖片：使用 assets/image/ground.png (原始尺寸已符合 60x60px)
+        ground_path = os.path.join(base_path, "assets", "image", "ground.png")
+        try:
+            self.ground_img = pygame.image.load(ground_path).convert_alpha()
+            print(f"[Renderer] Successfully loaded ground texture: {ground_path}")
+        except Exception as e:
+            print(f"[Renderer] Failed to load ground image at {ground_path}: {e}")
+            self.ground_img = None
+
+        # 載入閘門圖片：使用 assets/image/gate.png (原始尺寸已符合 60x60px)
+        gate_path = os.path.join(base_path, "assets", "image", "gate.png")
+        try:
+            self.gate_img = pygame.image.load(gate_path).convert_alpha()
+            print(f"[Renderer] Successfully loaded gate texture: {gate_path}")
+        except Exception as e:
+            print(f"[Renderer] Failed to load gate image at {gate_path}: {e}")
+            self.gate_img = None
+
+        # 載入迷霧圖片：使用 assets/image/fog.png
+        fog_path = os.path.join(base_path, "assets", "image", "fog.png")
+        try:
+            self.fog_img = pygame.image.load(fog_path).convert_alpha()
+            print(f"[Renderer] Successfully loaded fog texture: {fog_path}")
+        except Exception as e:
+            print(f"[Renderer] Failed to load fog image at {fog_path}: {e}")
+            self.fog_img = None
+
+        # 載入按鈕圖片
+        untriggerd_path = os.path.join(base_path, "assets", "image", "button_untriggerd.png")
+        try:
+            self.btn_untriggerd_img = pygame.image.load(untriggerd_path).convert_alpha()
+            print(f"[Renderer] Successfully loaded untriggered button texture: {untriggerd_path}")
+        except Exception as e:
+            print(f"[Renderer] Failed to load untriggered button image at {untriggerd_path}: {e}")
+            self.btn_untriggerd_img = None
+
+        triggerd_path = os.path.join(base_path, "assets", "image", "button_triggerd.png")
+        try:
+            self.btn_triggerd_img = pygame.image.load(triggerd_path).convert_alpha()
+            print(f"[Renderer] Successfully loaded triggered button texture: {triggerd_path}")
+        except Exception as e:
+            print(f"[Renderer] Failed to load triggered button image at {triggerd_path}: {e}")
+            self.btn_triggerd_img = None
+
+    def _load_font(self, path, size, fallback_bold=False):
+        """載入指定 .ttf 字體；失敗時 fallback 回 pygame 內建字型，確保缺檔也能運作。
+        fallback_bold：fallback 時是否用粗體（給通關大字維持份量）。"""
+        try:
+            font = pygame.font.Font(path, size)
+            return font
+        except Exception as e:
+            print(f"[Renderer] Failed to load font {path} (size {size}): {e}; using default")
+            return pygame.font.SysFont(None, size, bold=fallback_bold)
 
     def clear(self):
         """用背景色清空畫面"""
@@ -123,7 +227,9 @@ class Renderer:
         tile_colors = render_data.get("tile_colors", _TILE_COLORS)
         players  = render_data.get("players", {})
         pacmen   = render_data.get("pacmen", [])
+        knives   = render_data.get("knives", [])
         buttons  = render_data.get("buttons", [])
+        warning  = render_data.get("warning", {"active": False})
         clear_anim = render_data.get("clear_anim", {"stage": 0, "timer": 0.0})
 
         rows = len(tile_map)
@@ -162,20 +268,32 @@ class Renderer:
                 tile = tile_map[r][c]
                 tx = c * tile_size - ox
                 ty = r * tile_size - oy
-                color = tile_colors.get(tile, _TILE_COLORS[2])
-                pygame.draw.rect(self.screen, color, (tx, ty, tile_size, tile_size))
 
-                # 磚片細節：按鈕畫亮綠正方形，迷霧陷阱畫霧點提示
-                if tile == 4:  # B 按鈕：中央畫小方塊提示
-                    inner = 10
-                    pygame.draw.rect(
-                        self.screen, (120, 255, 120),
-                        (tx + inner, ty + inner, tile_size - inner * 2, tile_size - inner * 2)
-                    )
-                elif tile == 6:  # F 迷霧陷阱：畫幾個霧點提示腳下有陷阱
-                    cy = ty + tile_size // 2
-                    for off in (-12, 0, 12):
-                        pygame.draw.circle(self.screen, (180, 160, 210), (tx + tile_size // 2 + off, cy), 4)
+                if tile == 0 and self.wall_img:
+                    self.screen.blit(self.wall_img, (tx, ty))
+                elif (tile == 1 or tile == 2) and self.ground_img:
+                    self.screen.blit(self.ground_img, (tx, ty))
+                elif tile == 3 and self.gate_img:
+                    self.screen.blit(self.gate_img, (tx, ty))
+                elif tile == 4:
+                    # 根據是否有按鈕被踩下切換圖片
+                    btn_img = self.btn_triggerd_img if render_data.get("any_gate_pressed") else self.btn_untriggerd_img
+                    if btn_img:
+                        self.screen.blit(btn_img, (tx, ty))
+                    else:
+                        # 圖片載入失敗時的備援繪圖
+                        color = tile_colors.get(tile, _TILE_COLORS[2])
+                        pygame.draw.rect(self.screen, color, (tx, ty, tile_size, tile_size))
+                        inner = 10
+                        pygame.draw.rect(
+                            self.screen, (120, 255, 120),
+                            (tx + inner, ty + inner, tile_size - inner * 2, tile_size - inner * 2)
+                        )
+                elif tile == 6 and self.fog_img:
+                    self.screen.blit(self.fog_img, (tx, ty))
+                else:
+                    color = tile_colors.get(tile, _TILE_COLORS[2])
+                    pygame.draw.rect(self.screen, color, (tx, ty, tile_size, tile_size))
 
         # 1.5. 繪製互動按鈕 (原生 Pygame 繪圖實作發光)
         for btn in buttons:
@@ -226,6 +344,25 @@ class Renderer:
                 pygame.draw.rect(self.screen, color_rgb, (bx - size // 2, by - size // 2, size, size), border_radius=10)
                 pygame.draw.rect(self.screen, color_rgb, (bx - size // 2, by - size // 2, size, size), 3, border_radius=10)
             else:
+                # 充能點沒滿時的脈衝發光特效 (強效多層漸層邊框)
+                curr_t = pygame.time.get_ticks() / 1000.0
+                # 加快脈衝頻率 (4.0 -> 5.0)
+                pulse = (math.sin(curr_t * 2.0) + 1.0) / 2.0 
+                
+                # 裡面不發光，透過 10 層邊框疊加營造向外擴散的強烈漸層
+                for i in range(10):
+                    # 每一層的擴張距離與透明度遞減，初始透明度從 50 提升至 140
+                    layer_expand = int(pulse * (i + 1) * 2)
+                    glow_size = size + layer_expand
+                    glow_alpha = int((100 - i * 10) * pulse)
+                    
+                    if glow_alpha > 0:
+                        glow_surf = pygame.Surface((glow_size, glow_size), pygame.SRCALPHA)
+                        # 變動線寬：越靠近中心越厚 (4px -> 1px)
+                        glow_w = max(1, 4 - i // 3)
+                        pygame.draw.rect(glow_surf, (*color_rgb, glow_alpha), (0, 0, glow_size, glow_size), glow_w, border_radius=10 + layer_expand // 4)
+                        self.screen.blit(glow_surf, (bx - glow_size // 2, by - glow_size // 2))
+
                 # 未觸發狀態：外框直接使用 constants.py 定義的對應顏色
                 pygame.draw.rect(self.screen, color_rgb, (bx - size // 2, by - size // 2, size, size), 3, border_radius=10)
                 
@@ -269,7 +406,7 @@ class Renderer:
             # 暫時倒地時繪製救援進度弧線
             if not is_alive and rescue_prog > 0:
                 pygame.draw.circle(self.screen, (80, 80, 80), (px, py), radius + 2, 3) # 繪製外圈
-                frac = min(rescue_prog / 2.0, 1.0)  # RESCUE_HOLD_TIME=2.0
+                frac = min(rescue_prog, 1.0)
                 end_angle = -math.pi / 2 + frac * 2 * math.pi
                 pygame.draw.arc(
                     self.screen, (255, 220, 50),
@@ -281,28 +418,136 @@ class Renderer:
             for i in range(rescue_count):
                 pygame.draw.circle(self.screen, (255, 80, 80), (px - 12 + i * 8, py - radius - 12), 3)
 
-        # 3. 繪製所有 Pac-Man（黃色圓形；數量會隨時間複製增加）
+        # 3. 繪製所有 Pac-Man
         for pm in pacmen:
             pmx = int(pm.get("x", 0)) - ox
             pmy = int(pm.get("y", 0)) - oy
-            pm_radius = pm.get("avatar_size", 15)
-            pygame.draw.circle(self.screen, (255, 220, 0), (pmx, pmy), pm_radius)
-            pygame.draw.circle(self.screen, (200, 160, 0), (pmx, pmy), pm_radius, 2)
+            vkey = pm.get("visual_key")
+            surface = VisualRegistry.get_surface(vkey) if vkey else None
+
+            if surface:
+                # 處理 1x2 影格切割 (Pac-Man 在 ReversePacman 中定義為 2 欄動畫)
+                cols = 2
+                frame_idx = pm.get("frame_index", 0) % cols
+                w, h = surface.get_size()
+                frame_w = w // cols
+                area = pygame.Rect(frame_idx * frame_w, 0, frame_w, h)
+                self.screen.blit(surface, (pmx - frame_w // 2, pmy - h // 2), area)
+            else:
+                # Fallback: 若圖片尚未載入或遺失，繪製原本的黃色圓形
+                pm_radius = pm.get("avatar_size", 15)
+                pygame.draw.circle(self.screen, (255, 220, 0), (pmx, pmy), pm_radius)
+                pygame.draw.circle(self.screen, (200, 160, 0), (pmx, pmy), pm_radius, 2)
+
+        # 3.2 繪製飛刀
+        for kn in knives:
+            kx, ky = int(kn["x"]) - ox, int(kn["y"]) - oy
+            surface = VisualRegistry.get_surface(kn["visual_key"])
+            if surface:
+                # 如果飛刀正在淡出 (fade_timer > 0)，設定透明度
+                if not kn["is_active"] and kn["fade_timer"] > 0:
+                    # 假設淡出時長為 1.0 秒
+                    alpha = int(255 * kn["fade_timer"])
+                    surface = surface.copy()
+                    surface.set_alpha(alpha)
+                
+                self.screen.blit(surface, (kx - surface.get_width() // 2, ky - surface.get_height() // 2))
+            else:
+                # Fallback: 繪製小灰色矩形
+                pygame.draw.rect(self.screen, (150, 150, 150), (kx - 15, ky - 15, 30, 30))
 
         # 3.5. 致盲迷霧：本地玩家踩到迷霧時，蓋暗幕並在其周圍留一個清晰圓
         if render_data.get("fog_active"):
             self._draw_fog(render_data, players, local_color, ox, oy)
 
+        # 3.3 繪製飛刀預警 (移至迷霧後繪製，確保預警文字不被致盲黑幕遮擋)
+        self._draw_knife_warning(warning)
+
         # 4. HUD：原本用於顯示玩家個人蓄能條，現已廢棄（改由地圖上的 ColorButton 顯示）
         # self._draw_charge_hud(render_data)
 
         # 5. 通關過場動畫 (Clear Animation Overlay)
-        #    新版以 _cleared/_failed 旗標結束，暫時不送 clear_anim 資料 → stage 0 靜默不畫；
-        #    待結束流程接上 clear_anim 排程後即可自動顯示。
-        self._draw_clear_overlay(clear_anim)
+        clear_stage = clear_anim.get("stage", 0)
+        if 0 < clear_stage < 5:
+            clear_timer = clear_anim.get("timer", 0.0)
+            alpha = 128
+            if clear_stage == 1:
+                # 階段 1 (Pre Pause)，讓黑底根據時間慢慢變暗 (Fade-in)
+                progress = min(1.0, clear_timer / CLEAR_PRE_PAUSE_TIME)
+                alpha = int(128 * progress)
+                
+            if alpha > 0:
+                dim_overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
+                dim_overlay.fill((0, 0, 0, alpha))
+                self.screen.blit(dim_overlay, (0, 0))
+        self._draw_anim_overlay(clear_anim, "C L E A R !")
+
+        # 開場動畫
+        start_anim = render_data.get("start_anim", {"stage": 0, "timer": 0.0})
+        start_stage = start_anim.get("stage", 0)
+        if 0 < start_stage < 6:
+            start_timer = start_anim.get("timer", 0.0)
+            alpha = 128
+            if start_stage == 5:
+                # 階段 4 (布條滑出時)，讓黑底根據時間慢慢變淡，營造開燈感
+                progress = min(1.0, start_timer / CLEAR_OUT_TIME)
+                alpha = int(128 * (1.0 - progress))
+                
+            if alpha > 0:
+                # 在動畫期間繪製全畫面半透明黑底，讓背景變暗
+                dim_overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
+                dim_overlay.fill((0, 0, 0, alpha))
+                self.screen.blit(dim_overlay, (0, 0))
+
+            # 根據階段決定文字內容與映射渲染階段
+            display_text = "S T A R T !"
+            mapped_stage = start_stage
+            if start_stage == 3:
+                display_text = start_anim.get("title", "GAME")
+            elif start_stage == 4:
+                mapped_stage = 3 # 使用文字進場邏輯
+            elif start_stage == 5:
+                mapped_stage = 4 # 使用布條滑出邏輯
+                
+            self._draw_anim_overlay({"stage": mapped_stage, "timer": start_timer}, display_text, text_color=(84, 160, 255))
 
         # 失敗投票覆蓋層（四人倒地後出現，蓋在最上層）
         self._draw_defeat_vote(render_data.get("defeat_vote"))
+
+    def _draw_knife_warning(self, warning):
+        """在飛刀生成的方向邊緣繪製預警文字與倒數"""
+        if not warning or not warning.get("active"):
+            return
+            
+        sw, sh = self.screen.get_size()
+        # warning["direction"] 是飛刀移動的方向
+        move_dir = str(warning.get("direction", "")).lower()
+        timer = max(0.0, warning.get("timer", 0.0))
+        
+        margin = 100
+        pos_kwargs = {}
+
+        if move_dir == "right": # 從左方生成往右飛
+            from_side = "LEFT"
+            pos_kwargs = {"midleft": (margin, sh // 2)}
+        elif move_dir == "left": # 從右方生成往左飛
+            from_side = "RIGHT"
+            pos_kwargs = {"midright": (sw - margin, sh // 2)}
+        elif move_dir == "down": # 從上方生成往下飛
+            from_side = "TOP"
+            pos_kwargs = {"midtop": (sw // 2, margin)}
+        elif move_dir == "up": # 從下方生成往上飛
+            from_side = "BOTTOM"
+            pos_kwargs = {"midbottom": (sw // 2, sh - margin)}
+        else:
+            pos_kwargs = {"center": (sw // 2, 200)}
+
+        msg = str(int(timer) + 1)
+        text_surf = self.font_warning.render(msg, True, (255, 50, 50))
+        text_surf.set_alpha(150) # 增加一點不透明度使其更醒目
+        
+        rect = text_surf.get_rect(**pos_kwargs)
+        self.screen.blit(text_surf, rect)
 
     def _draw_defeat_vote(self, vote):
         """繪製失敗投票畫面：半透明黑底 + 標題/倒數 + 兩個可點按鈕（含票數）+ 四色投票明細。
@@ -315,20 +560,20 @@ class Renderer:
             return
 
         sw, sh = self.screen.get_size()
-        # 半透明黑底覆蓋全畫面
+        # 半透明遮罩覆蓋全畫面：用地圖牆的深藍（取代純黑），讓投票層與遊戲世界融為一體
         overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 200))
+        overlay.fill(_VOTE_COLORS["overlay"])
         self.screen.blit(overlay, (0, 0))
 
         cx = sw // 2
 
-        # 標題
-        title = self.font_large.render("ALL DOWN!", True, (255, 80, 80))
-        self.screen.blit(title, (cx - title.get_width() // 2, sh // 2 - 180))
+        # 標題（Pixelify Sans 大標題字）
+        title = self.font_title.render("ALL DOWN!", True, _VOTE_COLORS["title"])
+        self.screen.blit(title, (cx - title.get_width() // 2, sh // 2 - 250))
 
-        # 倒數
+        # 倒數（暖米白）
         secs = int(vote.get("time_left", 0)) + 1  # 向上取整，顯示較直覺
-        countdown = self.font_large.render(f"{secs}s", True, (230, 230, 230))
+        countdown = self.font_large.render(f"{secs}s", True, _VOTE_COLORS["countdown"])
         self.screen.blit(countdown, (cx - countdown.get_width() // 2, sh // 2 - 120))
 
         # 統計票數
@@ -338,43 +583,47 @@ class Renderer:
         continue_count = sum(1 for v in votes.values() if v)
         giveup_count = sum(1 for v in votes.values() if not v)
 
-        # 兩個並排按鈕（可點）：CONTINUE(綠) / GIVE UP(紅)，按鈕上標票數
+        # 兩個並排按鈕（可點）：CONTINUE(地圖按鈕綠) / GIVE UP(地圖閘門紅)，按鈕上標票數
         btn_w, btn_h, gap = 300, 90, 60
         by = sh // 2 - 40
         self.vote_continue_rect = pygame.Rect(cx - btn_w - gap // 2, by, btn_w, btn_h)
         self.vote_giveup_rect = pygame.Rect(cx + gap // 2, by, btn_w, btn_h)
         # 本機已投票後按鈕變暗，提示已不可再點
-        cont_bg = (40, 110, 40) if local_voted else (60, 170, 60)
-        give_bg = (110, 40, 40) if local_voted else (170, 60, 60)
+        cont_bg = _VOTE_COLORS["continue_dim"] if local_voted else _VOTE_COLORS["continue"]
+        give_bg = _VOTE_COLORS["giveup_dim"] if local_voted else _VOTE_COLORS["giveup"]
         self._draw_vote_button(self.vote_continue_rect, "CONTINUE", continue_count, cont_bg)
         self._draw_vote_button(self.vote_giveup_rect, "GIVE UP", giveup_count, give_bg)
 
         # 提示文字（滑鼠點擊）
         tip_txt = "Voted - waiting for others..." if local_voted else "Click to vote"
-        tip = self.font.render(tip_txt, True, (210, 210, 210))
-        self.screen.blit(tip, (cx - tip.get_width() // 2, by + btn_h + 16))
+        tip = self.font.render(tip_txt, True, _VOTE_COLORS["tip"])
+        self.screen.blit(tip, (cx - tip.get_width() // 2, by + btn_h + 25))
 
-        # 四色投票明細：CONTINUE(綠) / GIVE UP(紅) / 未投(灰)
-        y = by + btn_h + 56
+        # 四色投票明細：CONTINUE(綠) / GIVE UP(紅) / 未投(暖灰)
+        y = by + btn_h + 70
         for color in ("blue", "green", "pink", "red"):
             if color in votes:
-                label, c = ("CONTINUE", (120, 230, 120)) if votes[color] else ("GIVE UP", (230, 120, 120))
+                if votes[color]:
+                    label, c = "CONTINUE", _VOTE_COLORS["detail_continue"]
+                else:
+                    label, c = "GIVE UP", _VOTE_COLORS["detail_giveup"]
             else:
-                label, c = ("waiting...", (160, 160, 160))
+                label, c = "waiting...", _VOTE_COLORS["detail_waiting"]
             me = " (you)" if color == local_color else ""
             line = self.font.render(f"{color.upper()}{me}: {label}", True, c)
             self.screen.blit(line, (cx - line.get_width() // 2, y))
             y += 28
 
     def _draw_vote_button(self, rect, label, count, bg_color):
-        """繪製單一投票按鈕：底色矩形 + 邊框 + 「LABEL (count)」文字置中。"""
+        """繪製單一投票按鈕：底色矩形 + 暖棕邊框 + 「LABEL (count)」暖白文字置中。
+        邊框/文字色取自地圖地板暖棕色系，與遊戲世界風格一致。"""
         pygame.draw.rect(self.screen, bg_color, rect, border_radius=8)
-        pygame.draw.rect(self.screen, (235, 235, 235), rect, width=2, border_radius=8)
-        text = self.font_large.render(f"{label}  ({count})", True, (255, 255, 255))
+        pygame.draw.rect(self.screen, _VOTE_COLORS["btn_border"], rect, width=3, border_radius=8)
+        text = self.font_button.render(f"{label}  ({count})", True, _VOTE_COLORS["btn_text"])
         self.screen.blit(text, (rect.centerx - text.get_width() // 2,
                                 rect.centery - text.get_height() // 2))
 
-    def _draw_clear_overlay(self, anim):
+    def _draw_anim_overlay(self, anim, text_str, text_color=(255, 50, 50)):
         stage = anim.get("stage", 0)
         if stage == 0 or stage == 5:
             return
@@ -383,13 +632,11 @@ class Renderer:
         timer = anim.get("timer", 0.0)
 
         banner_color = (255, 255, 255)
-        text_color = (255, 50, 50)
 
         banner_x = 0
         banner_w = sw
 
         # 準備文字 Surface (300px 粗體)
-        text_str = "C L E A R !"
         base_text_surf = self.font_clear.render(text_str, True, text_color)
         current_alpha = 255
         current_scale = 1.0
@@ -411,20 +658,27 @@ class Renderer:
             banner_x = 0
             banner_w = sw
 
+            in_end = CLEAR_TEXT_PAUSE_TIME + CLEAR_TEXT_ANIM_TIME
+            fade_start = CLEAR_TEXT_TIME - CLEAR_TEXT_FADE_OUT_TIME
+
             if timer < CLEAR_TEXT_PAUSE_TIME:
                 # 第一階段：停頓期 (文字隱藏)
                 current_alpha = 0
                 current_scale = 2.5
-            elif timer < (CLEAR_TEXT_PAUSE_TIME + CLEAR_TEXT_ANIM_TIME):
+            elif timer < in_end:
                 # 第二階段：縮放進場動畫
                 anim_timer = timer - CLEAR_TEXT_PAUSE_TIME
                 anim_prog = anim_timer / CLEAR_TEXT_ANIM_TIME
                 current_scale = 2.5 - 1.5 * anim_prog
                 current_alpha = int(255 * anim_prog)
-            else:
+            elif timer < fade_start:
                 # 第三階段：穩定停留期
                 current_scale = 1.0
                 current_alpha = 255
+            else:
+                # 第四階段：淡出
+                fade_prog = (timer - fade_start) / CLEAR_TEXT_FADE_OUT_TIME
+                current_alpha = int(255 * (1.0 - max(0.0, min(1.0, fade_prog))))
 
         elif stage == 4:  # Slide Out: 帶著文字向右收走
             progress = min(1.0, timer / CLEAR_OUT_TIME)

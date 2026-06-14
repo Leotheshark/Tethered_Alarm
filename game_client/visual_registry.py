@@ -37,19 +37,20 @@ class VisualRegistry:
         # 嘗試可能的路徑 (相容單數 sprite 與複數 sprites 資料夾名稱)
         possible_paths = [
             os.path.join(base_path, "assets", "sprites", filename),
-            os.path.join(base_path, "assets", "sprite", filename)
+            os.path.join(base_path, "assets", "sprite", filename),
+            os.path.join(base_path, "assets", "image", filename) # 新增搜尋路徑
         ]
 
         path = next((p for p in possible_paths if os.path.exists(p)), None)
 
         if path is None:
-            print(f"[VisualRegistry] ❌ 錯誤: 在以下位置都找不到 {filename}:\n  - {possible_paths[0]}\n  - {possible_paths[1]}")
+            print(f"[VisualRegistry] ❌ 錯誤: 找不到檔案 {filename}。請確認它存在於 assets/sprites/ 或 assets/image/ 中")
             return None
 
         image = pygame.image.load(path).convert_alpha()
         cls._cache[key] = image
         cls._tags[key] = tag
-        print(f"[VisualRegistry] ✅ 成功載入: {key} <- {path}")
+        # print(f"[VisualRegistry] ✅ 成功載入: {key} <- {path}")
         return image
 
     @classmethod

@@ -103,6 +103,7 @@ const btnBackToMenu = document.getElementById('btn-back-to-menu');
 
 let ROOM_ID = urlParams.get('room');
 let socketManager = null;
+let currentServerUrl = window.location.origin; // 紀錄當前大廳實際連線的伺服器位址
 let lastIsSpeaker = true; // 紀錄最後一次收到的硬體狀態
 let isTestingVolume = false; // 紀錄是否正在測試音量
 let myColor = 'blue'; // 紀錄伺服器指派給我的顏色
@@ -498,7 +499,7 @@ const uiCallbacks = {
 
         // 通知本地 Python 啟動遊戲並傳遞連線資訊
         if (window.pywebview && window.pywebview.api.launch_game_instance) {
-            window.pywebview.api.launch_game_instance(ROOM_ID, window.location.origin, myColor);
+            window.pywebview.api.launch_game_instance(ROOM_ID, currentServerUrl, myColor);
         }
 
         setTimeout(() => {
@@ -632,6 +633,7 @@ function startApp() {
 function connectToRoom(serverUrl, roomId) {
     console.log(`正在連線至 ${serverUrl} 房間: ${roomId}`);
     ROOM_ID = roomId;
+    currentServerUrl = serverUrl; // 關鍵：儲存當初連線使用的 URL (包含朋友輸入的 Host IP)
     document.getElementById('displayRoomId').textContent = ROOM_ID;
     lobbyBackButton.style.display = 'flex';
     mainMenuOverlay.style.display = 'none';
